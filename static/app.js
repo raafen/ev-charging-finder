@@ -1,171 +1,2244 @@
-import {CONNECTORS,CONNECTOR_LABELS,compatibility,compatibilityLabel,estimate,milesBetween} from './domain.js';
-const $=(s,root=document)=>root.querySelector(s);
-const $$=(s,root=document)=>[...root.querySelectorAll(s)];
-const boot=JSON.parse($('#initial-data').textContent),config=boot.config||{};
-const load=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(`current-${key}`))??fallback;}catch{return fallback;}};
-const save=(key,value)=>{try{localStorage.setItem(`current-${key}`,JSON.stringify(value));}catch{toast('Local storage is unavailable. Changes will last only for this visit.');}};
-const state={stations:boot.stations||[],filtered:[],selected:null,center:[40.758,-73.9855],radius:10,demo:boot.demo!==false,retrieved:null,vehicles:load('vehicles',[]),activeVehicle:load('active-vehicle',null),favorites:load('favorites',[]),recent:load('recent',[]),searches:load('searches',[]),preferred:load('networks',[]),comparison:[],tripStops:[],route:null,fly:load('fly',false)};
-let map,markers=[],requestNumber=0,controller,explorerCleanup,modalEpoch=0,toastTimer,mapFailed=false,shellCache=null;
-const vehicle=()=>state.vehicles.find(v=>v.id===state.activeVehicle);
-function el(tag,text,cls){const node=document.createElement(tag);if(text!=null)node.textContent=text;if(cls)node.className=cls;return node;}
-function icon(name){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('class','icon');svg.setAttribute('aria-hidden','true');const use=document.createElementNS(svg.namespaceURI,'use');use.setAttribute('href',`#i-${name}`);svg.append(use);return svg;}
-function button(text,fn,cls='secondary',symbol){const b=el('button',null,cls);b.type='button';if(symbol)b.append(icon(symbol));if(text)b.append(document.createTextNode(text));b.onclick=fn;return b;}
-function link(text,href,cls=''){const a=el('a',text,cls);try{const u=new URL(href,location.href);if(!['https:','http:'].includes(u.protocol))return el('span',text);a.href=u.href;a.target='_blank';a.rel='noopener noreferrer';}catch{return el('span',text);}return a;}
-function toast(text){clearTimeout(toastTimer);$('#toast').textContent=text;$('#toast').hidden=false;toastTimer=setTimeout(()=>$('#toast').hidden=true,4500);}
-function status(s){const n=el('span',null,`status ${s.operational===true?'good':s.operational===false?'bad':''}`);n.append(el('span',null,'status-dot'),document.createTextNode(s.operational===true?'Reported operational':s.operational===false?'Reported unavailable':'Status unknown'));return n;}
-const stationName=s=>s.name.replace(/\s*[—–]\s*Fictional$/,'');
-const networkName=s=>s.network||'Network not reported';
-const dateLabel=value=>{if(!value)return 'Not provided';const date=new Date(value);return Number.isNaN(date.valueOf())?'Not provided':date.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});};
-function openModal(title){explorerCleanup?.();explorerCleanup=null;modalEpoch++;$('#modal-title').textContent=title;$('#modal-body').replaceChildren();if(!$('#modal').open)$('#modal').showModal();return $('#modal-body');}
-function closeModal(){explorerCleanup?.();explorerCleanup=null;modalEpoch++;$('#modal').close();}
-$('#modal-close').onclick=closeModal;$('#modal').addEventListener('cancel',()=>{explorerCleanup?.();explorerCleanup=null;modalEpoch++;});
-$('#modal').addEventListener('click',e=>{if(e.target===$('#modal')){const r=e.target.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeModal();}});
-const theme=load('theme',matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
-document.documentElement.dataset.theme=theme;document.documentElement.classList.toggle('outdoor',load('outdoor',false));
-$('#theme').onclick=()=>{document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';save('theme',document.documentElement.dataset.theme);if(map&&!mapFailed)map.setStyle(mapStyle());};
-function updateMode(){const zip=$('#location-mode').value==='zip';$('#zip').disabled=!zip;$('#zip').required=zip;$('#coordinate-fields').hidden=zip;for(const key of ['latitude','longitude']){$(`[name=${key}]`).disabled=zip;$(`[name=${key}]`).required=!zip;}$('.search-input').hidden=!zip;}
-$('#location-mode').onchange=updateMode;updateMode();
-if(config.mode==='static'){$('[name=demo]').disabled=true;$('#connection-mode').textContent='GitHub Pages · offline demo';}
-else if(!config.live_search)$('#connection-mode').textContent='Live provider not configured';
-$('[name=demo]').checked=state.demo;
-function filterStations(){const power=$('#power').getAttribute('aria-pressed')==='true',operational=$('#operational').getAttribute('aria-pressed')==='true',connector=$('#connector').value,network=$('#network').value;
- const source=$('#favorites-only').checked?[...new Map([...state.stations,...state.favorites].map(s=>[String(s.id),s])).values()]:state.stations;
- state.filtered=source.filter(s=>(!power||s.max_power_kw>=150)&&(!operational||s.operational===true)&&(!connector||s.connectors?.includes(connector))&&(!network||networkName(s)===network)&&(!$('#favorites-only').checked||state.favorites.some(f=>f.id===s.id))&&(!$('#preferred-only').checked||state.preferred.includes(networkName(s)))&&(!$('#compatible').checked||['compatible','adapter_required'].includes(compatibility(vehicle(),s).physical)));
- const sort=$('#sort').value;state.filtered.sort((a,b)=>sort==='power'?(b.max_power_kw||0)-(a.max_power_kw||0):sort==='name'?a.name.localeCompare(b.name):(a.distance_miles??Infinity)-(b.distance_miles??Infinity));
- const count=[power,operational,connector,network,$('#favorites-only').checked,$('#preferred-only').checked,$('#compatible').checked].filter(Boolean).length;$('#filter-count').hidden=!count;$('#filter-count').textContent=count;
-}
-function toggleFavorite(s){const found=state.favorites.findIndex(f=>f.id===s.id);if(found<0)state.favorites.push({...s,saved_at:new Date().toISOString()});else state.favorites.splice(found,1);save('favorites',state.favorites);render();toast(found<0?'Saved on this device. Station data is a snapshot, not live.':'Removed from saved stations.');}
-function toggleCompare(s){const index=state.comparison.findIndex(f=>f.id===s.id);if(index>=0)state.comparison.splice(index,1);else if(state.comparison.length<3)state.comparison.push(s);else return toast('Compare up to three stations. Remove one first.');render();}
-function card(s){const article=el('article',null,`station-card ${state.selected===s.id?'selected':''}`);article.dataset.station=s.id;
- const top=el('div',null,'card-top'),monogram=el('span',networkName(s).replace('Fictional ','').split(' ').map(x=>x[0]).slice(0,2).join(''),'network-monogram');
- const heading=el('div',null,'card-title');heading.append(el('h3',stationName(s)),el('p',networkName(s).replace('Fictional ','Demo · ')));top.append(monogram,heading,el('span',Number.isFinite(s.distance_miles)?`${s.distance_miles.toFixed(1)} mi`:'— mi','distance'));
- const specs=el('div',null,'card-specs'),power=el('span',null,'power-spec');power.append(icon('bolt'),document.createTextNode(s.max_power_kw??'—'),el('small','kW'));specs.append(power,el('span',null,'spec-divider'));
- for(const connector of (s.connectors?.length?s.connectors:['Unknown']).slice(0,2))specs.append(el('span',connector,'connector-badge'));
- specs.append(el('span',`${s.points??'—'} points`,'points-label'));
- const bottom=el('div',null,'card-bottom'),details=button('View station',()=>showDetail(s),'card-link','arrow');details.setAttribute('aria-label',`View details for ${s.name}`);
- const compare=button('',()=>toggleCompare(s),'icon-button compare-button','layers');compare.setAttribute('aria-label',`Compare ${s.name}`);compare.setAttribute('aria-pressed',state.comparison.some(x=>x.id===s.id));
- const saved=state.favorites.some(x=>x.id===s.id),favorite=button('',()=>toggleFavorite(s),`icon-button ${saved?'saved':''}`,'heart');favorite.setAttribute('aria-label',`${saved?'Unsave':'Save'} ${s.name}`);favorite.setAttribute('aria-pressed',saved);
- bottom.append(details,compare,favorite);article.append(top,status(s),specs);if(vehicle())article.append(el('p',compatibilityLabel(compatibility(vehicle(),s).physical),'assumptions'));if(s.fictional)bottom.insertBefore(el('span','FICTIONAL','fictional-label'),compare);article.append(bottom);return article;
-}
-function render(){filterStations();$('#result-title').textContent=`${state.filtered.length} station${state.filtered.length===1?'':'s'} nearby`;$('#result-subtitle').textContent='Straight-line distance · not live occupancy';const results=$('#results');results.replaceChildren(...state.filtered.map(card));if(!state.filtered.length){const empty=el('div',null,'empty-state');empty.append(icon('search'),el('h3','A little further, perhaps?'),el('p','No matching stations. Try a wider radius or clear your filters.'),button('Clear filters',resetFilters,'text-button'));results.append(empty);}$('#comparison-tray').hidden=!state.comparison.length;$('#comparison-count').textContent=`${state.comparison.length} of 3 stations`;$('#demo-banner').hidden=!state.demo;$('#garage-label').textContent=vehicle()?`${vehicle().make} ${vehicle().model}`:'My garage';updateMapData();}
-function clearDetail(){state.selected=null;$('#detail').hidden=true;$('#results').hidden=false;render();}
-function resetFilters(){for(const id of ['power','operational'])$('#'+id).setAttribute('aria-pressed','false');$('#connector').value='';$('#network').value='';for(const id of ['compatible','favorites-only','preferred-only'])$('#'+id).checked=false;clearDetail();}
-$('#reset-filters').onclick=resetFilters;
-for(const id of ['power','operational'])$('#'+id).onclick=()=>{$('#'+id).setAttribute('aria-pressed',$('#'+id).getAttribute('aria-pressed')!=='true');clearDetail();};
-for(const id of ['connector','network','compatible','favorites-only','preferred-only','sort'])$('#'+id).onchange=()=>{clearDetail();$('#message').textContent='Filters apply to the retrieved subset, not every station in this area.';};
-$('#filters-toggle').onclick=()=>{const expanded=$('#filters-panel').hidden;$('#filters-panel').hidden=!expanded;$('#filters-toggle').setAttribute('aria-expanded',expanded);};
-$('#favorites-nav').onclick=()=>{$('#favorites-only').checked=!$('#favorites-only').checked;$('#filters-panel').hidden=false;$('#filters-toggle').setAttribute('aria-expanded','true');clearDetail();if(innerWidth<=800)setSheet(true);};
-function updateNetworkOptions(){const current=$('#network').value;$('#network').replaceChildren(new Option('All networks',''));for(const name of [...new Set(state.stations.map(networkName))].sort())$('#network').add(new Option(name,name));$('#network').value=current;if($('#network').selectedIndex<0)$('#network').value='';}
-function setSheet(expanded){$('.sidebar').classList.toggle('expanded',expanded);$('#sheet-toggle').setAttribute('aria-expanded',expanded);$('#sheet-toggle').textContent=expanded?'Collapse station list':'Expand station list';}
-$('#sheet-toggle').onclick=()=>setSheet(!$('.sidebar').classList.contains('expanded'));
-function setListMode(list){$('.workspace').classList.toggle('list-only',list);$('#list-view').setAttribute('aria-pressed',list);$('#map-view').setAttribute('aria-pressed',!list);if(!list){map?.resize();setSheet(false);}save('list',list);}
-$('#list-view').onclick=()=>setListMode(true);$('#map-view').onclick=()=>setListMode(false);
-const mapStyle=()=>`https://tiles.openfreemap.org/styles/${document.documentElement.dataset.theme==='dark'?'dark':'positron'}`;
-function mapFallback(message){mapFailed=true;$('#map-warning').textContent=message;$('#map-warning').hidden=false;for(const id of ['pitch','recenter','fit'])$('#'+id).disabled=true;if(!map){$('.map-fallback p').textContent=message;$('.map-fallback h2').textContent='The list is ready when you are.';}}
-function initMap(){if(!window.maplibregl)return mapFallback('Map unavailable on this device. Use the fully functional station list.');
- try{map=new maplibregl.Map({container:'map',style:mapStyle(),center:[state.center[1],state.center[0]],zoom:13.2,maxZoom:18,pitch:0,attributionControl:{compact:true},canvasContextAttributes:{antialias:false},maxTileCacheSize:60});map.addControl(new maplibregl.NavigationControl({showZoom:false,showCompass:true}),'top-right');map.addControl(new maplibregl.ScaleControl({unit:'imperial',maxWidth:80}));
- map.on('style.load',()=>{mapFailed=false;$('#map-warning').hidden=true;for(const id of ['pitch','recenter','fit'])$('#'+id).disabled=false;setupMapLayers();});
- map.on('dragend',()=>$('#search-area').hidden=false);map.on('zoomend',updateMarkers);map.on('moveend',updateMarkers);map.on('sourcedata',e=>{if(e.sourceId==='stations')updateMarkers();});
- map.on('error',()=>{if(!map.isStyleLoaded()){mapFallback('Some map tiles could not load. Station results are unaffected. Switch to List for a low-power experience.');}});
- map.getCanvas().addEventListener('webglcontextlost',()=>mapFallback('Map graphics are unavailable. Station results and directions remain accessible in List mode.'));
- }catch{mapFallback('Map graphics are unavailable. Station search still works in List mode.');}}
-function setupMapLayers(){if(!map.getSource('stations'))map.addSource('stations',{type:'geojson',data:{type:'FeatureCollection',features:[]},cluster:true,clusterRadius:48,clusterMaxZoom:12});
- if(!map.getLayer('station-source-loader'))map.addLayer({id:'station-source-loader',type:'circle',source:'stations',paint:{'circle-radius':0,'circle-opacity':0}});
- if(!map.getSource('radius'))map.addSource('radius',{type:'geojson',data:radiusGeoJSON()});
- if(!map.getLayer('radius-fill'))map.addLayer({id:'radius-fill',type:'fill',source:'radius',paint:{'fill-color':'#3a7954','fill-opacity':.035}});
- if(!map.getLayer('radius-line'))map.addLayer({id:'radius-line',type:'line',source:'radius',paint:{'line-color':'#4a815d','line-width':1.4,'line-dasharray':[4,4],'line-opacity':.65}});
- const style=map.getStyle(),building=style.layers.find(l=>l['source-layer']==='building');
- if(building&&!map.getLayer('current-buildings'))map.addLayer({id:'current-buildings',type:'fill-extrusion',source:building.source,'source-layer':'building',minzoom:14,layout:{visibility:$('#pitch').getAttribute('aria-pressed')==='true'?'visible':'none'},paint:{'fill-extrusion-color':document.documentElement.dataset.theme==='dark'?'#465449':'#d6ded3','fill-extrusion-height':['coalesce',['get','render_height'],['get','height'],8],'fill-extrusion-base':['coalesce',['get','render_min_height'],0],'fill-extrusion-opacity':.72}});
- if(config.terrain_url&&!map.getSource('terrain')){map.addSource('terrain',{type:'raster-dem',url:config.terrain_url,tileSize:256});$('#terrain').hidden=false;}
- if(config.satellite_url&&!map.getSource('satellite')){map.addSource('satellite',{type:'raster',tiles:[config.satellite_url],tileSize:256,attribution:config.satellite_attribution||'Configured satellite provider'});map.addLayer({id:'satellite-layer',type:'raster',source:'satellite',layout:{visibility:'none'}},'radius-fill');$('#satellite').hidden=false;}
- updateMapData();drawRoute();}
-function radiusGeoJSON(){const [lat,lon]=state.center,coords=[],angular=state.radius/3958.7613,rad=Math.PI/180;for(let i=0;i<=90;i++){const bearing=i/90*Math.PI*2,phi=lat*rad,lambda=lon*rad;const p=Math.asin(Math.sin(phi)*Math.cos(angular)+Math.cos(phi)*Math.sin(angular)*Math.cos(bearing));const l=lambda+Math.atan2(Math.sin(bearing)*Math.sin(angular)*Math.cos(phi),Math.cos(angular)-Math.sin(phi)*Math.sin(p));coords.push([l/rad,p/rad]);}return {type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[coords]}};}
-function updateMapData(){if(!map?.getSource('stations'))return;map.getSource('stations').setData({type:'FeatureCollection',features:state.filtered.map(s=>({type:'Feature',geometry:{type:'Point',coordinates:[s.longitude,s.latitude]},properties:{id:String(s.id)}}))});map.getSource('radius')?.setData(radiusGeoJSON());updateMarkers();}
-function updateMarkers(){if(!map?.getSource('stations')||!map.isSourceLoaded('stations'))return;markers.forEach(m=>m.remove());markers=[];const features=map.querySourceFeatures('stations'),seen=new Set();for(const feature of features){const p=feature.properties,key=p.cluster?`c${p.cluster_id}`:`s${p.id}`;if(seen.has(key))continue;seen.add(key);let node;
- if(p.cluster){node=button(String(p.point_count),async()=>{try{const zoom=await map.getSource('stations').getClusterExpansionZoom(p.cluster_id);map.easeTo({center:feature.geometry.coordinates,zoom,duration:motion()?450:0});}catch{toast('Zoom in to explore this cluster.');}},'cluster-pin');node.setAttribute('aria-label',`Expand cluster of ${p.point_count} stations`);}
- else{const s=state.filtered.find(s=>String(s.id)===String(p.id));if(!s)continue;node=button(state.selected===s.id?`${s.max_power_kw??'—'} kW`:'',()=>showDetail(s),`station-pin ${s.operational===false?'unavailable':s.operational===true?'':'unknown'} ${state.selected===s.id?'selected':''}`,'bolt');node.setAttribute('aria-label',`${s.name}, ${s.status}, ${s.max_power_kw??'unknown'} kW`);}
- markers.push(new maplibregl.Marker({element:node,anchor:'bottom'}).setLngLat(feature.geometry.coordinates).addTo(map));}}
-const motion=()=>!matchMedia('(prefers-reduced-motion: reduce)').matches;
-function fitResults(){if(!map||!state.filtered.length)return;const bounds=new maplibregl.LngLatBounds();state.filtered.forEach(s=>bounds.extend([s.longitude,s.latitude]));map.fitBounds(bounds,{padding:{top:150,right:75,bottom:innerWidth<=800?Math.round($('.workspace').clientHeight*.5):120,left:65},maxZoom:14,duration:motion()?450:0});}
-$('#fit').onclick=fitResults;$('#recenter').onclick=()=>map?.easeTo({center:[state.center[1],state.center[0]],zoom:13.2,bearing:0,duration:motion()?450:0});
-$('#pitch').onclick=()=>{if(!map)return;const pitched=$('#pitch').getAttribute('aria-pressed')!=='true';$('#pitch').setAttribute('aria-pressed',pitched);map.easeTo({pitch:pitched?55:0,zoom:pitched?Math.max(14.5,map.getZoom()):map.getZoom(),duration:motion()?600:0});if(map.getLayer('current-buildings'))map.setLayoutProperty('current-buildings','visibility',pitched?'visible':'none');else if(pitched)toast('Pitched view enabled. Building geometry is unavailable in this style.');};
-$('#terrain').onclick=()=>{const active=$('#terrain').getAttribute('aria-pressed')!=='true';$('#terrain').setAttribute('aria-pressed',active);map.setTerrain(active?{source:'terrain',exaggeration:1}:null);};
-$('#satellite').onclick=()=>{const active=$('#satellite').getAttribute('aria-pressed')!=='true';$('#satellite').setAttribute('aria-pressed',active);map.setLayoutProperty('satellite-layer','visibility',active?'visible':'none');};
-$('#search-area').onclick=()=>{const p=map.getCenter();$('#location-mode').value='coordinates';updateMode();$('[name=latitude]').value=p.lat.toFixed(5);$('[name=longitude]').value=p.lng.toFixed(5);search();};
-async function api(path,data,signal){const response=await fetch(new URL(path,document.baseURI),{method:data?'POST':'GET',headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined,signal});const result=await response.json();if(!response.ok)throw Error(result.error||result.detail?.[0]?.msg||`Request failed (${response.status}). Please try again.`);return result;}
-async function demoSearch(data){let center;if(data.location_mode==='zip'){if(!/^\d{5}$/.test(data.zip_code))throw Error('Enter a five-digit US ZIP code.');if(data.zip_code!=='10036')throw Error('Offline demo supports ZIP 10036 only. Try coordinates or enable live search.');center=[40.758,-73.9855];}else center=[Number(data.latitude),Number(data.longitude)];const radius=Number(data.radius);if(!center.every(Number.isFinite)||Math.abs(center[0])>90||Math.abs(center[1])>180||!Number.isFinite(radius)||radius<=0||radius>100)throw Error('Enter valid coordinates and a radius from 1 to 100 miles.');const response=await fetch(new URL('./demo.json',import.meta.url));if(!response.ok)throw Error('Offline demo data could not load. Reconnect once to cache the interface.');const records=await response.json();return {stations:records.map(s=>({...s,distance_miles:milesBetween(center,[s.latitude,s.longitude])})).filter(s=>s.distance_miles<=radius).sort((a,b)=>a.distance_miles-b.distance_miles),center,location:'Midtown Manhattan · fictional demo',demo:true,retrieved_at:new Date().toISOString()};}
-function searchValues(){const values=Object.fromEntries(new FormData($('#search')));values.demo=$('[name=demo]').checked;return values;}
-async function search(override={}){const id=++requestNumber;controller?.abort();controller=new AbortController();const data={...searchValues(),...override};$('#submit').disabled=true;$('#message').classList.remove('error');$('#message').textContent='Finding your next charge…';$('#retry').hidden=true;$('#results').setAttribute('aria-busy','true');if(!state.stations.length)$('#results').replaceChildren(...Array.from({length:3},()=>el('div',null,'skeleton')));
- try{const result=data.demo?await demoSearch(data):await api('api/search',data,controller.signal);if(id!==requestNumber)return;state.stations=result.stations;state.center=result.center;state.radius=Number(data.radius);state.demo=result.demo;state.retrieved=result.retrieved_at;save('last-results',{...result,radius:state.radius});updateNetworkOptions();clearDetail();$('#message').textContent=result.demo?'Fictional examples · not real charging locations.':`Retrieved ${new Date(result.retrieved_at).toLocaleString()} · Up to 100 reported stations. Live availability unavailable.`;$('#map-location').textContent=result.demo?'Midtown Manhattan':result.location;$('#map-location-sub').textContent=result.demo?'New York, United States':'Approximate search center';$('#radius-label').textContent=`${state.radius} mi radius`;$('#search-area').hidden=true;fitResults();}
- catch(error){if(error.name!=='AbortError'&&id===requestNumber){$('#message').textContent=`${error.message} Previous results are preserved.`;$('#message').classList.add('error');$('#retry').hidden=false;if(!state.stations.length)render();}}
- finally{if(id===requestNumber){$('#submit').disabled=false;$('#results').removeAttribute('aria-busy');}}}
-$('#search').onsubmit=e=>{e.preventDefault();search();};$('#retry').onclick=()=>search();
-$('#locate').onclick=()=>{if(!navigator.geolocation)return toast('Location is unavailable. Enter a ZIP code instead.');navigator.geolocation.getCurrentPosition(p=>{$('#location-mode').value='coordinates';updateMode();$('[name=latitude]').value=p.coords.latitude;$('[name=longitude]').value=p.coords.longitude;search();},()=>toast('Location permission unavailable. Search with a ZIP code instead.'),{timeout:10000});};
-function infoRow(container,label,value){const row=el('div',null,'info-row');row.append(el('span',label),el('strong',value??'Not provided'));container.append(row);}
-function showDetail(s){state.selected=s.id;render();const panel=$('#detail');panel.replaceChildren();const back=button('Back to stations',()=>{clearDetail();$(`[data-station="${CSS.escape(String(s.id))}"] .card-link`)?.focus();},'back','arrow');panel.append(back,el('h2',stationName(s)),el('p',s.address),status(s));if(s.fictional)panel.append(el('div','FICTIONAL DEMO · Do not travel to this example location.','notice warning'));
- const metrics=el('div',null,'detail-metrics');for(const [value,label] of [[`${s.max_power_kw??'—'} kW`,'maximum advertised power'],[`${Number.isFinite(s.distance_miles)?s.distance_miles.toFixed(1):'—'} mi`,'straight-line distance']]){const box=el('div');box.append(el('strong',value),el('small',label));metrics.append(box);}panel.append(metrics);
- const actions=el('div',null,'detail-actions');if(!s.fictional)actions.append(link('Get directions',`https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}`,'primary'));actions.append(button('Estimate charge',()=>openEstimator(s),'secondary','bolt'));panel.append(actions);
- panel.append(el('h3','Connections & compatibility'));const comp=compatibility(vehicle(),s);for(const c of s.connections||[]){const row=el('div',null,'connection-row');row.append(el('strong',CONNECTOR_LABELS[c.connector]||'Unknown connector'),el('span',`${c.current_type||'Unknown'} · ${c.power_kw??'—'} kW`),el('small',`${c.quantity??'Unknown'} reported connectors · ${c.voltage??'—'} V · ${c.amps??'—'} A`));const rule=comp.connections.find(x=>x.connector===c.connector&&x.current_type===c.current_type);if(rule)row.append(el('small',`${compatibilityLabel(rule.physical)} — ${rule.reason}`));panel.append(row);}if(!s.connections?.length)panel.append(el('p','Connection details not provided.'));
- panel.append(el('p',`${s.points??'Unknown'} charging points reported. Connector quantity is not a count of simultaneously usable parking spaces.`));panel.append(button(vehicle()?'Edit my vehicle':'Add a vehicle for compatibility',openGarage,'text-button','car'));
- panel.append(el('div',`Network access: ${comp.network==='allowed'?'recorded by you; verify with operator':'unknown'}. Physical fit does not establish network authorization. A NACS inlet alone does not establish Supercharger access.`,'notice'));
- panel.append(el('h3','Before you go'));infoRow(panel,'Network / operator',networkName(s));infoRow(panel,'Station host',s.host);infoRow(panel,'Reported access',s.access);infoRow(panel,'Reported opening hours',s.hours);infoRow(panel,'Membership',s.membership_required===true?'Reported required':s.membership_required===false?'Reported not required':'Unknown');panel.append(el('p',s.access_comments||'No additional access notes supplied. Missing information does not mean public access.'));
- panel.append(el('h3','Reported pricing'),el('p',s.pricing||'Price not provided'),el('p',`Source: ${s.provider||'Unknown provider'}. Pricing text is not a verified structured tariff; fees may apply.`),el('h3','Data, not guesswork'),el('div','Live availability unavailable. Reported operational status is not real-time occupancy or a guarantee that equipment works now.','notice warning'));
- infoRow(panel,'Last verified',dateLabel(s.verified));infoRow(panel,'Last updated',dateLabel(s.updated));const fields=[s.max_power_kw,s.connections?.length,s.access,s.hours,s.verified,s.updated],complete=fields.filter(Boolean).length;panel.append(el('p',`${complete} of 6 detail fields supplied — completeness, not reliability.`));const bar=el('div',null,'quality-bar'),fill=el('span');fill.style.width=`${complete/6*100}%`;bar.append(fill);panel.append(bar,el('p','Old or missing verification dates increase uncertainty. Confirm access and equipment with the operator. Photos, site geometry and amenities are omitted when licensed, verified evidence is unavailable.'));
- if(s.source_url)panel.append(link('View source / report incorrect data',s.source_url));panel.append(el('p',`Provider: ${s.provider||'Unknown'} · ${s.license||'See source licensing.'}`));
- const tools=el('div',null,'detail-actions');tools.append(button('Share station',()=>shareStation(s),'secondary','external'),button('Add to trip',()=>{if(s.fictional)return toast('Fictional demo stations cannot be navigation stops.');if(!state.tripStops.some(x=>x.id===s.id))state.tripStops.push(s);toast('Added to your trip on this device.');},'secondary','route'));panel.append(tools);
- if(map)panel.append(button('Show on map',()=>{setSheet(false);map.flyTo({center:[s.longitude,s.latitude],zoom:Math.max(map.getZoom(),14),offset:innerWidth<=800?[0,-$('.workspace').clientHeight*.22]:[0,0],duration:state.fly&&motion()?900:0});},'text-button','pin'));
- $('#results').hidden=true;panel.hidden=false;panel.scrollTop=0;back.focus({preventScroll:true});if(innerWidth<=800)setSheet(false);state.recent=[{...s,viewed_at:new Date().toISOString()},...state.recent.filter(x=>x.id!==s.id)].slice(0,12);save('recent',state.recent);
- // Opening details does not move the map; the explicit Show on map button controls movement.
-}
-async function shareURL(url){try{await navigator.clipboard.writeText(url);toast('Link copied. No API keys or personal history included.');}catch{const body=openModal('Share this link');const input=el('input');input.value=url;input.readOnly=true;input.style.width='100%';body.append(input);input.select();}}
-function shareStation(s){const url=new URL(location.pathname,location.origin);url.searchParams.set('station',s.id);shareURL(url.href);}
-async function openExplorer(){const body=openModal('The connector lab'),epoch=modalEpoch;body.append(el('p','A little understanding goes a long way. Loading original, illustrative connector diagrams…'));try{const module=await import('./explorer.js');if(epoch!==modalEpoch)return;body.replaceChildren();const cleanup=await module.mountExplorer(body);if(epoch!==modalEpoch)cleanup();else explorerCleanup=cleanup;}catch{if(epoch===modalEpoch)body.replaceChildren(el('div','Connector studio could not load. NACS and CCS1 support DC charging when the vehicle and network permit it. J1772 is AC. CHAdeMO is DC. Confirm exact vehicle compatibility with its manufacturer.','notice'));}}
-$('#learn-nav').onclick=openExplorer;$('#learn-card').onclick=openExplorer;$('#garage-nav').onclick=openGarage;$('#explore-nav').onclick=()=>{closeModal();resetFilters();};
-function inputField(form,label,name,value='',type='text',attrs={}){const wrap=el('label',label);const input=el('input');Object.assign(input,{name,type,value,...attrs});wrap.append(input);form.append(wrap);return input;}
-function selectField(form,label,name,options,value){const wrap=el('label',label),select=el('select');select.name=name;for(const entry of options){const [val,text]=Array.isArray(entry)?entry:[entry,entry];select.add(new Option(text,val));}if(value!=null)select.value=value;wrap.append(select);form.append(wrap);return select;}
-function openGarage(editId){const body=openModal('Your car. Your kind of charge.');body.append(el('p','A private, local garage. No account, no inferred specifications. Use your owner’s manual or manufacturer documentation; entries below are user-supplied, not independently verified.'));
- const saved=el('div',null,'vehicle-list');for(const v of state.vehicles){const item=el('div',null,`vehicle-card ${v.id===state.activeVehicle?'active':''}`),choose=button(`${v.make} ${v.model}`,()=>{state.activeVehicle=v.id;save('active-vehicle',v.id);render();openGarage();},'text-button','car');item.append(choose,button('Edit',()=>openGarage(v.id),'text-button'),button('Remove',()=>{state.vehicles=state.vehicles.filter(x=>x.id!==v.id);if(state.activeVehicle===v.id)state.activeVehicle=state.vehicles[0]?.id??null;save('vehicles',state.vehicles);save('active-vehicle',state.activeVehicle);render();openGarage();},'text-button'));saved.append(item);}body.append(saved);
- const silhouette=el('div',null,'garage-silhouette');silhouette.innerHTML='<svg viewBox="0 0 180 75" aria-label="Generic vehicle silhouette, not a specific model"><path d="m16 49 7-18 31-5 20-17h44l24 19 23 6 6 18H15Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="m60 27 18-13h35l18 13Z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="46" cy="51" r="12" fill="var(--surface)" stroke="currentColor" stroke-width="2"/><circle cx="139" cy="51" r="12" fill="var(--surface)" stroke="currentColor" stroke-width="2"/></svg>';silhouette.append(el('p','Generic silhouette. Specifications and charging-port geometry vary by vehicle.'));body.append(silhouette);
- const editing=state.vehicles.find(v=>v.id===editId),form=el('form'),grid=el('div',null,'form-grid');inputField(grid,'Make','make',editing?.make||'','text',{required:true,maxLength:60,placeholder:'e.g. Hyundai'});inputField(grid,'Model','model',editing?.model||'','text',{required:true,maxLength:60,placeholder:'e.g. IONIQ 5'});inputField(grid,'Model year','year',editing?.year||'','number',{min:1990,max:new Date().getFullYear()+2,required:true});inputField(grid,'Trim (optional)','trim',editing?.trim||'','text',{maxLength:60});selectField(grid,'Vehicle inlet','inlet',CONNECTORS.map(c=>[c,CONNECTOR_LABELS[c]]),editing?.connectors?.[0]||'CCS1');inputField(grid,'Usable battery capacity (kWh)','battery_kwh',editing?.battery_kwh??'','number',{min:1,max:500,step:'any',placeholder:'From a verified source'});inputField(grid,'Maximum AC power (kW)','max_ac_kw',editing?.max_ac_kw??'','number',{min:0,max:100,step:'any'});inputField(grid,'Maximum DC power (kW)','max_dc_kw',editing?.max_dc_kw??'','number',{min:0,max:1000,step:'any'});inputField(grid,'Consumption (kWh / 100 mi)','consumption_kwh_per_100_miles',editing?.consumption_kwh_per_100_miles??'','number',{min:1,max:200,step:'any'});inputField(grid,'Specification source URL or reference','source',editing?.source||'','text',{required:true,maxLength:500});inputField(grid,'Source checked on','source_date',editing?.source_date||new Date().toISOString().slice(0,10),'date',{required:true});form.append(grid);
- const adapterSection=el('div',null,'form-section');adapterSection.append(el('h3','Adapters you own'),el('p','Record only adapters approved for your vehicle and current type. This is not a safety certification.','assumptions'));const adapterList=el('div',null,'adapter-list');const addAdapter=(a={})=>{const row=el('div',null,'adapter-row');selectField(row,'Charger connector','adapter_from',CONNECTORS,a.from||'NACS');selectField(row,'Vehicle inlet','adapter_to',CONNECTORS,a.to||'CCS1');selectField(row,'Current','adapter_current',['AC','DC'],a.current_type||'DC');row.append(button('Remove',()=>row.remove(),'text-button'));adapterList.append(row);};for(const a of editing?.adapters||[])addAdapter(a);adapterSection.append(adapterList,button('Add an adapter',()=>addAdapter(),'text-button','plug'));form.append(adapterSection);
- const access=el('div',null,'form-section');access.append(el('h3','Network access is separate'),el('p','Enter networks for which you have independently confirmed authorization. A NACS inlet does not guarantee Supercharger access.','assumptions'));inputField(access,'Confirmed networks, separated by commas','networks',editing?.networks?.join(', ')||'');form.append(access);const error=el('p',null,'message error');error.setAttribute('role','alert');form.append(error);const actions=el('div',null,'form-actions'),submit=el('button',editing?'Save vehicle changes':'Add to my garage','primary');submit.type='submit';actions.append(submit);form.append(actions);body.append(form);
- form.onsubmit=e=>{e.preventDefault();const values=Object.fromEntries(new FormData(form)),v={...values,id:editing?.id||crypto.randomUUID(),connectors:[values.inlet],networks:values.networks.split(',').map(x=>x.trim()).filter(Boolean),adapters:$$('.adapter-row',adapterList).map(row=>({from:$('[name=adapter_from]',row).value,to:$('[name=adapter_to]',row).value,current_type:$('[name=adapter_current]',row).value}))};for(const key of ['battery_kwh','max_ac_kw','max_dc_kw','consumption_kwh_per_100_miles'])v[key]=values[key]===''?null:Number(values[key]);delete v.adapter_from;delete v.adapter_to;delete v.adapter_current;delete v.inlet;state.vehicles=[...state.vehicles.filter(x=>x.id!==v.id),v];state.activeVehicle=v.id;save('vehicles',state.vehicles);save('active-vehicle',v.id);render();toast('Vehicle saved on this device. Specifications remain user-supplied.');openGarage();};
-}
-function openEstimator(s,second){const body=openModal(second?'Compare charging stops':'A clearer charging estimate');body.append(el('p','Constant-power approximation, not a charging prediction. Enter your vehicle’s specifications and your own tariff assumptions. No ambiguous station pricing text is parsed.'));
- const v=vehicle(),form=el('form'),grid=el('div',null,'form-grid');inputField(grid,'Starting battery (%)','start',20,'number',{min:0,max:99,required:true});inputField(grid,'Target battery (%)','target',80,'number',{min:1,max:100,required:true});inputField(grid,'Usable battery capacity (kWh)','battery',v?.battery_kwh??'','number',{min:1,max:500,step:'any',required:true});const current=selectField(grid,'Charging current','current',['DC','AC'],s?.connections?.[0]?.current_type==='AC'?'AC':'DC');const vehicleLimit=inputField(grid,'Vehicle charging limit (kW)','vehicle',current.value==='DC'?v?.max_dc_kw??'':v?.max_ac_kw??'','number',{min:.1,max:2000,step:'any',required:true});inputField(grid,'Charger reported limit (kW)','charger',s?.max_power_kw??'','number',{min:.1,max:2000,step:'any',required:true});inputField(grid,'Charging efficiency (%)','efficiency',90,'number',{min:1,max:100,step:'any',required:true});inputField(grid,'Vehicle consumption (kWh / 100 mi)','consumption',v?.consumption_kwh_per_100_miles??30,'number',{min:1,max:200,step:'any',required:true});current.onchange=()=>vehicleLimit.value=current.value==='DC'?v?.max_dc_kw??'':v?.max_ac_kw??'';
- for(const [name,label] of [['kwh_rate','Energy rate ($ / kWh)'],['minute_rate','Time rate ($ / minute)'],['session_fee','Session fee ($)'],['parking_fee','Parking fee ($)']])inputField(grid,label,name,'','number',{min:0,max:10000,step:'any',placeholder:'Unknown; enter 0 if none'});form.append(grid,el('p','Leaving any fee blank makes the total unknown. Amounts are before tax; enter tax-inclusive rates if appropriate.','assumptions'));
- if(second){const box=el('div',null,'form-section');box.append(el('h3',`Second stop: ${stationName(second)}`));inputField(box,'Second charger limit (kW)','second_power',second.max_power_kw??'','number',{min:.1,max:2000,step:'any',required:true});form.append(box,el('p','Both stops use the same vehicle, state of charge, efficiency and manually entered fees. This compares power, not verified real-world tariffs.','assumptions'));}
- const submit=el('button','Calculate estimate','primary');submit.type='submit';const output=el('div');output.setAttribute('aria-live','polite');form.append(el('div',null,'form-actions'));$('.form-actions',form).append(submit);body.append(form,output);
- form.onsubmit=e=>{e.preventDefault();output.replaceChildren();try{const values=Object.fromEntries(new FormData(form));for(const [station,input] of [[s,values],...(second?[[second,{...values,charger:values.second_power}]]:[])]){const result=estimate(input);output.append(el('h3',station?stationName(station):'Your estimate'));const stats=el('div',null,'estimate-results');for(const [number,label] of [[`${Math.ceil(result.minutes)} min`,'constant-power charging'],[`${result.batteryEnergy.toFixed(1)} kWh`,'energy added to battery'],[result.total===null?'Unknown':`$${result.total.toFixed(2)}`,'session cost · before tax']]){const cell=el('div',null,'estimate-stat');cell.append(el('strong',number),el('small',label));stats.append(cell);}output.append(stats,el('p',`Capped at ${result.power.toFixed(1)} kW (minimum of vehicle and charger). ${result.gridEnergy.toFixed(1)} kWh from charger at ${values.efficiency}% efficiency; approximately ${Math.round(result.miles)} miles added at ${values.consumption} kWh/100 mi.`,'assumptions'));for(const [label,value] of Object.entries(result.fees))infoRow(output,`${label[0].toUpperCase()+label.slice(1)} charge`,value===null?'Not provided':`$${value.toFixed(2)}`);if(!result.complete)output.append(el('p',`Known fees subtotal: $${result.known.toFixed(2)}. Missing fees prevent a complete cost estimate.`,'assumptions'));}output.append(el('div','Power tapers as the battery fills, especially at high state of charge. Temperature, battery conditioning, battery health, charger sharing and charging losses affect results. No verified vehicle-specific charging curve is configured.','notice warning'));}catch(error){output.append(el('p',error.message,'message error'));}};
-}
-function openComparison(){if(!state.comparison.length)return;const body=openModal('A side-by-side look'),wrap=el('div',null,'table-scroll'),table=el('table',null,'comparison-table'),head=el('tr');head.append(el('th','Station'));state.comparison.forEach(s=>head.append(el('th',stationName(s))));table.append(head);for(const [label,value] of [['Reported status',s=>s.status],['Maximum advertised power',s=>`${s.max_power_kw??'Unknown'} kW`],['Connectors',s=>s.connectors?.join(', ')||'Unknown'],['Charging points',s=>s.points??'Unknown'],['Straight-line miles',s=>s.distance_miles?.toFixed(2)??'Unknown'],['Network',networkName],['Access',s=>s.access||'Unknown'],['Pricing text',s=>s.pricing||'Price not provided'],['Physical compatibility',s=>compatibilityLabel(compatibility(vehicle(),s).physical)],['Last verified',s=>dateLabel(s.verified)]]){const row=el('tr');row.append(el('th',label));state.comparison.forEach(s=>row.append(el('td',value(s))));table.append(row);}wrap.append(table);body.append(wrap,el('div','Reported operational status is not live occupancy. Prices and accessibility require confirmation. Demo locations are fictional.','notice'));if(state.comparison.length>=2)body.append(button('Compare charging time & cost',()=>openEstimator(state.comparison[0],state.comparison[1]),'primary','bolt'));}
-$('#compare-open').onclick=openComparison;$('#compare-clear').onclick=()=>{state.comparison=[];render();};
-const networkLinks={'Tesla Supercharger':'https://www.tesla.com/supercharger','Tesla Destination':'https://www.tesla.com/destination-charging','Electrify America':'https://www.electrifyamerica.com/','EVgo':'https://www.evgo.com/','ChargePoint':'https://www.chargepoint.com/'};
-function openNetworks(){const body=openModal('Networks, without the guesswork');body.append(el('p','Operators are not connector standards. Public access, payment methods and vehicle authorization can vary by site. Neutral labels only; Current is not affiliated with these networks.'));const chips=el('div',null,'network-chips'),grid=el('div',null,'network-grid');const networks=[...new Set(state.stations.map(networkName))];for(const name of networks){const stations=state.stations.filter(s=>networkName(s)===name),matches=state.filtered.filter(s=>networkName(s)===name).length;chips.append(button(`${name.replace('Fictional ','Demo ')} · ${matches}`,()=>{$('#network').value=name;clearDetail();closeModal();},'chip'));const card=el('div',null,'network-card');card.append(el('h3',name),el('p',`${matches} matching of ${stations.length} retrieved stations`),el('p',`Connectors: ${[...new Set(stations.flatMap(s=>s.connectors))].join(', ')||'Unknown'}`),el('p','Access and payment requirements: see individual source records.'));const label=el('label'),check=el('input');check.type='checkbox';check.checked=state.preferred.includes(name);check.onchange=()=>{state.preferred=check.checked?[...new Set([...state.preferred,name])]:state.preferred.filter(n=>n!==name);save('networks',state.preferred);render();};label.append(check,document.createTextNode('Preferred network'));card.append(label);if(networkLinks[name])card.append(link('Official network information',networkLinks[name]));grid.append(card);}body.append(chips,grid);}
-$('#networks-open').onclick=openNetworks;
-function parseCoordinate(value){const parts=value.split(',').map(x=>Number(x.trim()));if(parts.length!==2||!parts.every(Number.isFinite)||Math.abs(parts[0])>90||Math.abs(parts[1])>180)throw Error('Use latitude, longitude coordinates for both locations.');return parts;}
-function drawRoute(){if(!map?.isStyleLoaded()||!state.route?.geometry)return;const data={type:'Feature',properties:{},geometry:state.route.geometry};if(map.getSource('trip-route'))map.getSource('trip-route').setData(data);else{map.addSource('trip-route',{type:'geojson',data});map.addLayer({id:'trip-route-line',type:'line',source:'trip-route',layout:{'line-join':'round','line-cap':'round'},paint:{'line-color':'#3c7c54','line-width':5,'line-opacity':.85}});}}
-function openTrip(){const body=openModal('Make the journey part of the plan.');body.append(el('p','Coordinate-based driving routes with explicit range assumptions. Navigation and routing providers receive the locations you submit.'));if(!config.routing||config.mode==='static')body.append(el('div','Driving routes are disabled: no routing provider is configured for this deployment. Set ROUTING_BASE_URL on the backend. Manual saved stops remain available; no fictional route, detour or range prediction is generated.','notice warning'));
- const form=el('form'),grid=el('div',null,'form-grid');inputField(grid,'Origin · latitude, longitude','origin','40.758, -73.9855','text',{required:true});inputField(grid,'Destination · latitude, longitude','destination','','text',{required:true,placeholder:'e.g. 41.3083, -72.9279'});inputField(grid,'Assumed full-charge range (mi)','range',250,'number',{min:1,max:1000,required:true});inputField(grid,'Starting battery (%)','start',80,'number',{min:1,max:100,required:true});inputField(grid,'Minimum arrival reserve (%)','reserve',15,'number',{min:0,max:90,required:true});inputField(grid,'Station corridor width (mi)','corridor',5,'number',{min:1,max:25,required:true});form.append(grid);const actions=el('div',null,'form-actions'),submit=el('button','Plan driving route','primary');submit.type='submit';submit.disabled=!config.routing||config.mode==='static';actions.append(submit);form.append(actions);body.append(form);const result=el('div');body.append(result);
- const renderTimeline=()=>{result.replaceChildren();if(state.route){const route=state.route;result.append(el('div',`${route.distance_miles.toFixed(1)} driving miles · ${Math.round(route.duration_minutes)} minutes without live traffic. Sampled corridor search is not exhaustive.`,'notice'));result.append(el('p',route.stop_plan?.reason||'Check every leg against your reserve.','assumptions'));const alternatives=route.alternatives;if(alternatives?.fast?.length)result.append(el('p',`Lower-detour candidates: ${alternatives.fast.map(id=>stationName(route.stations.find(s=>s.id===id)||{name:String(id)})).join(', ')}. Ranked by reported driving detour, not guaranteed fastest total trip.`,'assumptions'));if(!alternatives?.cheap?.length)result.append(el('p','Lower-cost ranking unavailable until you supply comparable numeric session-cost assumptions. Ambiguous pricing text is not used.','assumptions'));for(const s of route.stations||[]){const row=el('div',null,'info-row');row.append(el('span',stationName(s)),el('small',`${s.route?.detour_miles?.toFixed(1)??'—'} mi / ${Math.round(s.route?.detour_minutes??0)} min driving detour`),button('Add stop',()=>{if(!state.tripStops.some(x=>x.id===s.id))state.tripStops.push(s);renderTimeline();},'text-button'));result.append(row);}}
- const timeline=el('div',null,'trip-timeline');if(!state.tripStops.length)timeline.append(el('p','No stops yet. Add a real station from its details.','assumptions'));state.tripStops.forEach((s,i)=>{const stop=el('div',null,'trip-stop');stop.append(el('strong',`${i+1}. ${stationName(s)}`),el('p',s.route?`Driving detour: ${s.route.detour_miles.toFixed(1)} mi · ${Math.round(s.route.detour_minutes)} min. Charging duration requires vehicle assumptions.`:'Manual stop. Driving leg and arrival state of charge not computed.'));const origin=i>0?`&origin=${state.tripStops[i-1].latitude},${state.tripStops[i-1].longitude}`:'';stop.append(link('Navigate this leg',`https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}${origin}`),button('Estimate charging',()=>openEstimator(s),'text-button'),button('Remove',()=>{state.tripStops.splice(i,1);renderTimeline();},'text-button'));timeline.append(stop);});result.append(el('h3','Your stop timeline'),timeline);};renderTimeline();
- form.onsubmit=async e=>{e.preventDefault();const values=Object.fromEntries(new FormData(form));submit.disabled=true;try{const range=Number(values.range),start=Number(values.start),reserve=Number(values.reserve);if(reserve>=start)throw Error('Starting battery percentage must exceed arrival reserve.');state.route=await api('api/route',{origin:parseCoordinate(values.origin),destination:parseCoordinate(values.destination),range_miles:range*start/100,reserve_miles:range*reserve/100,corridor_miles:Number(values.corridor),include_stations:true,demo:false,vehicle:vehicle()||{}});state.stations=state.route.stations;updateNetworkOptions();render();drawRoute();renderTimeline();toast('Route ready. Review assumptions and sampled station coverage.');}catch(error){result.prepend(el('div',error.message,'notice warning'));}finally{submit.disabled=false;}};
-}
-$('#trip-nav').onclick=openTrip;
-function exportCSV(){const columns=['id','name','network','latitude','longitude','distance_miles','max_power_kw','points','status','access','pricing','verified','fictional'];const escape=value=>{let text=String(value??'');if(/^[=+\-@\t\r]/.test(text))text="'"+text;return '"'+text.replaceAll('"','""')+'"';};const content=[columns.join(','),...state.filtered.map(s=>columns.map(key=>escape(s[key])).join(','))].join('\r\n');const a=el('a');a.href=URL.createObjectURL(new Blob([content],{type:'text/csv;charset=utf-8'}));a.download='current-stations.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
-function openTools(){const body=openModal('Make it yours.'),grid=el('div',null,'tool-grid');grid.append(button('Export filtered results to CSV',exportCSV,'secondary','list'),button('Save this search',()=>{state.searches=[{...searchValues(),saved_at:new Date().toISOString()},...state.searches].slice(0,10);save('searches',state.searches);openTools();toast('Search saved locally.');},'secondary','bookmark'),button('Share filter settings',()=>{const url=new URL(location.pathname,location.origin);for(const key of ['connector','network'])if($('#'+key).value)url.searchParams.set(key,$('#'+key).value);if($('#power').getAttribute('aria-pressed')==='true')url.searchParams.set('power','150');if($('#operational').getAttribute('aria-pressed')==='true')url.searchParams.set('operational','1');shareURL(url.href);},'secondary','external'),button('Charging time & cost calculator',()=>openEstimator(),'secondary','bolt'));body.append(grid);
- for(const [label,key,current] of [['Outdoor readability / reduced transparency','outdoor',document.documentElement.classList.contains('outdoor')],['Animate explicit station fly-to','fly',state.fly]]){const row=el('label',null,'check-row'),input=el('input');input.type='checkbox';input.checked=current;input.onchange=()=>{save(key,input.checked);if(key==='outdoor')document.documentElement.classList.toggle('outdoor',input.checked);else state.fly=input.checked;};row.append(input,document.createTextNode(label));body.append(row);}
- body.append(el('h3','Saved searches'));if(!state.searches.length)body.append(el('p','Your saved searches stay on this device.','assumptions'));state.searches.forEach((s,i)=>{const row=el('div',null,'saved-search');row.append(el('span',`${s.location_mode==='zip'?s.zip_code:`${s.latitude}, ${s.longitude}`} · ${s.radius} mi ${s.demo?'· demo':''}`),button('Search',()=>{for(const [key,value] of Object.entries(s)){const field=$(`[name="${key}"]`);if(field&&field.type!=='checkbox')field.value=value;}updateMode();$('[name=demo]').checked=config.mode==='static'?true:s.demo;closeModal();search();},'text-button'),button('Remove',()=>{state.searches.splice(i,1);save('searches',state.searches);openTools();},'text-button'));body.append(row);});body.append(el('h3','Recently viewed'));for(const s of state.recent.slice(0,6))body.append(button(stationName(s),()=>{closeModal();showDetail(s);},'text-button'));
- body.append(el('div',`Local data is not live. ${state.retrieved?`Station retrieval: ${new Date(state.retrieved).toLocaleString()}. `:''}${shellCache?`Interface cached: ${new Date(shellCache).toLocaleString()}. `:''}Offline use requires a previous successful visit. Basemap tiles are not cached. No accounts or cross-device syncing.`,'notice'));if(config.mode!=='static')body.append(link('Explore the FastAPI documentation','./docs','secondary'));
-}
-$('#more-actions').onclick=openTools;
-$('#data-info').onclick=()=>{const body=openModal('Designed around honest data.');body.append(el('div','This demo contains fictional stations, fictional networks and illustrative specifications. None are real destinations. Do not use them for navigation.','notice warning'),el('p','Live station search, when configured, is provided by Open Charge Map. Operational status is reported, not live occupancy. Distances are straight-line miles unless explicitly labeled driving distance. Missing access, pricing, vehicle or amenity information stays unknown.'),link('Open Charge Map data and terms','https://openchargemap.org'),el('p','Map data: OpenStreetMap contributors / OpenFreeMap. See visible map attribution. Connector illustrations are original and educational, not engineering drawings.'));
+import {
+  CONNECTORS,
+  CONNECTOR_LABELS,
+  compatibility,
+  compatibilityLabel,
+  estimate,
+  milesBetween,
+} from "./domain.js";
+const $ = (s, root = document) => root.querySelector(s);
+const $$ = (s, root = document) => [...root.querySelectorAll(s)];
+const boot = JSON.parse($("#initial-data").textContent),
+  config = boot.config || {};
+const load = (key, fallback) => {
+  try {
+    return JSON.parse(localStorage.getItem(`current-${key}`)) ?? fallback;
+  } catch {
+    return fallback;
+  }
 };
-window.addEventListener('offline',()=>{$('#message').textContent='Offline · showing retained station snapshots, not live data. Maps may be unavailable.';});
-async function initialize(){updateNetworkOptions();const params=new URLSearchParams(location.search);for(const key of ['connector','network'])if(params.has(key))$('#'+key).value=params.get(key);if(params.get('power')==='150')$('#power').setAttribute('aria-pressed','true');if(params.get('operational')==='1')$('#operational').setAttribute('aria-pressed','true');
- if(!navigator.onLine){const cached=load('last-results',null);if(cached){state.stations=cached.stations;state.center=cached.center;state.retrieved=cached.retrieved_at;state.demo=cached.demo;state.radius=cached.radius;$('#message').textContent=`Offline snapshot retrieved ${new Date(cached.retrieved_at).toLocaleString()}. Not live.`;}}
- render();initMap();if(load('list',false))setListMode(true);if(boot.error){$('#message').textContent=boot.error;$('#message').classList.add('error');}
- const stationId=params.get('station');if(stationId){let station=state.stations.find(s=>String(s.id)===stationId);if(!station&&config.mode!=='static'){try{station=(await api(`api/station/${encodeURIComponent(stationId)}`)).station;state.stations.push(station);}catch(error){toast(error.message);}}if(station)showDetail(station);else toast('That station is unavailable in this demo.');}
- if('serviceWorker' in navigator){try{const registration=await navigator.serviceWorker.register(new URL('./sw.js',document.baseURI),{scope:'./'});navigator.serviceWorker.addEventListener('message',e=>{if(e.data?.type==='EV_CACHE_STATUS')shellCache=e.data.cached_at;});(registration.active||registration.waiting)?.postMessage({type:'CACHE_STATUS'});}catch{/* Offline support is optional; search remains functional. */}}
+const save = (key, value) => {
+  try {
+    localStorage.setItem(`current-${key}`, JSON.stringify(value));
+  } catch {
+    toast(
+      "Local storage is unavailable. Changes will last only for this visit.",
+    );
+  }
+};
+const state = {
+  stations: boot.stations || [],
+  filtered: [],
+  selected: null,
+  center: [40.758, -73.9855],
+  radius: 10,
+  demo: boot.demo !== false,
+  retrieved: null,
+  vehicles: load("vehicles", []),
+  activeVehicle: load("active-vehicle", null),
+  favorites: load("favorites", []),
+  recent: load("recent", []),
+  searches: load("searches", []),
+  preferred: load("networks", []),
+  comparison: [],
+  tripStops: [],
+  route: null,
+  fly: load("fly", false),
+};
+let map,
+  markers = [],
+  requestNumber = 0,
+  controller,
+  explorerCleanup,
+  modalEpoch = 0,
+  toastTimer,
+  mapFailed = false,
+  shellCache = null;
+const vehicle = () => state.vehicles.find((v) => v.id === state.activeVehicle);
+function el(tag, text, cls) {
+  const node = document.createElement(tag);
+  if (text != null) node.textContent = text;
+  if (cls) node.className = cls;
+  return node;
+}
+function icon(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "icon");
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS(svg.namespaceURI, "use");
+  use.setAttribute("href", `#i-${name}`);
+  svg.append(use);
+  return svg;
+}
+function button(text, fn, cls = "secondary", symbol) {
+  const b = el("button", null, cls);
+  b.type = "button";
+  if (symbol) b.append(icon(symbol));
+  if (text) b.append(document.createTextNode(text));
+  b.onclick = fn;
+  return b;
+}
+function link(text, href, cls = "") {
+  const a = el("a", text, cls);
+  try {
+    const u = new URL(href, location.href);
+    if (!["https:", "http:"].includes(u.protocol)) return el("span", text);
+    a.href = u.href;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+  } catch {
+    return el("span", text);
+  }
+  return a;
+}
+function toast(text) {
+  clearTimeout(toastTimer);
+  $("#toast").textContent = text;
+  $("#toast").hidden = false;
+  toastTimer = setTimeout(() => ($("#toast").hidden = true), 4500);
+}
+function status(s) {
+  const n = el(
+    "span",
+    null,
+    `status ${s.operational === true ? "good" : s.operational === false ? "bad" : ""}`,
+  );
+  n.append(
+    el("span", null, "status-dot"),
+    document.createTextNode(
+      s.operational === true
+        ? "Reported operational"
+        : s.operational === false
+          ? "Reported unavailable"
+          : "Status unknown",
+    ),
+  );
+  return n;
+}
+const stationName = (s) => s.name.replace(/\s*[—–]\s*Fictional$/, "");
+const networkName = (s) => s.network || "Network not reported";
+const dateLabel = (value) => {
+  if (!value) return "Not provided";
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf())
+    ? "Not provided"
+    : date.toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+};
+function openModal(title) {
+  explorerCleanup?.();
+  explorerCleanup = null;
+  modalEpoch++;
+  $("#modal-title").textContent = title;
+  $("#modal-body").replaceChildren();
+  if (!$("#modal").open) $("#modal").showModal();
+  return $("#modal-body");
+}
+function closeModal() {
+  explorerCleanup?.();
+  explorerCleanup = null;
+  modalEpoch++;
+  $("#modal").close();
+}
+$("#modal-close").onclick = closeModal;
+$("#modal").addEventListener("cancel", () => {
+  explorerCleanup?.();
+  explorerCleanup = null;
+  modalEpoch++;
+});
+$("#modal").addEventListener("click", (e) => {
+  if (e.target === $("#modal")) {
+    const r = e.target.getBoundingClientRect();
+    if (
+      e.clientX < r.left ||
+      e.clientX > r.right ||
+      e.clientY < r.top ||
+      e.clientY > r.bottom
+    )
+      closeModal();
+  }
+});
+const theme = load(
+  "theme",
+  matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
+);
+document.documentElement.dataset.theme = theme;
+document.documentElement.classList.toggle("outdoor", load("outdoor", false));
+$("#theme").onclick = () => {
+  document.documentElement.dataset.theme =
+    document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  save("theme", document.documentElement.dataset.theme);
+  if (map && !mapFailed) map.setStyle(mapStyle());
+};
+function updateMode() {
+  const zip = $("#location-mode").value === "zip";
+  $("#zip").disabled = !zip;
+  $("#zip").required = zip;
+  $("#coordinate-fields").hidden = zip;
+  for (const key of ["latitude", "longitude"]) {
+    $(`[name=${key}]`).disabled = zip;
+    $(`[name=${key}]`).required = !zip;
+  }
+  $(".search-input").hidden = !zip;
+}
+$("#location-mode").onchange = updateMode;
+updateMode();
+if (config.mode === "static") {
+  $("[name=demo]").disabled = true;
+  $("#connection-mode").textContent = "GitHub Pages · offline demo";
+} else if (!config.live_search)
+  $("#connection-mode").textContent = "Live provider not configured";
+$("[name=demo]").checked = state.demo;
+function filterStations() {
+  const power = $("#power").getAttribute("aria-pressed") === "true",
+    operational = $("#operational").getAttribute("aria-pressed") === "true",
+    connector = $("#connector").value,
+    network = $("#network").value;
+  const source = $("#favorites-only").checked
+    ? [
+        ...new Map(
+          [...state.stations, ...state.favorites].map((s) => [String(s.id), s]),
+        ).values(),
+      ]
+    : state.stations;
+  state.filtered = source.filter(
+    (s) =>
+      (!power || s.max_power_kw >= 150) &&
+      (!operational || s.operational === true) &&
+      (!connector || s.connectors?.includes(connector)) &&
+      (!network || networkName(s) === network) &&
+      (!$("#favorites-only").checked ||
+        state.favorites.some((f) => f.id === s.id)) &&
+      (!$("#preferred-only").checked ||
+        state.preferred.includes(networkName(s))) &&
+      (!$("#compatible").checked ||
+        ["compatible", "adapter_required"].includes(
+          compatibility(vehicle(), s).physical,
+        )),
+  );
+  const sort = $("#sort").value;
+  state.filtered.sort((a, b) =>
+    sort === "power"
+      ? (b.max_power_kw || 0) - (a.max_power_kw || 0)
+      : sort === "name"
+        ? a.name.localeCompare(b.name)
+        : (a.distance_miles ?? Infinity) - (b.distance_miles ?? Infinity),
+  );
+  const count = [
+    power,
+    operational,
+    connector,
+    network,
+    $("#favorites-only").checked,
+    $("#preferred-only").checked,
+    $("#compatible").checked,
+  ].filter(Boolean).length;
+  $("#filter-count").hidden = !count;
+  $("#filter-count").textContent = count;
+}
+function toggleFavorite(s) {
+  const found = state.favorites.findIndex((f) => f.id === s.id);
+  if (found < 0)
+    state.favorites.push({ ...s, saved_at: new Date().toISOString() });
+  else state.favorites.splice(found, 1);
+  save("favorites", state.favorites);
+  render();
+  toast(
+    found < 0
+      ? "Saved on this device. Station data is a snapshot, not live."
+      : "Removed from saved stations.",
+  );
+}
+function toggleCompare(s) {
+  const index = state.comparison.findIndex((f) => f.id === s.id);
+  if (index >= 0) state.comparison.splice(index, 1);
+  else if (state.comparison.length < 3) state.comparison.push(s);
+  else return toast("Compare up to three stations. Remove one first.");
+  render();
+}
+function card(s) {
+  const article = el(
+    "article",
+    null,
+    `station-card ${state.selected === s.id ? "selected" : ""}`,
+  );
+  article.dataset.station = s.id;
+  const top = el("div", null, "card-top"),
+    monogram = el(
+      "span",
+      networkName(s)
+        .replace("Fictional ", "")
+        .split(" ")
+        .map((x) => x[0])
+        .slice(0, 2)
+        .join(""),
+      "network-monogram",
+    );
+  const heading = el("div", null, "card-title");
+  heading.append(
+    el("h3", stationName(s)),
+    el("p", networkName(s).replace("Fictional ", "Demo · ")),
+  );
+  top.append(
+    monogram,
+    heading,
+    el(
+      "span",
+      Number.isFinite(s.distance_miles)
+        ? `${s.distance_miles.toFixed(1)} mi`
+        : "— mi",
+      "distance",
+    ),
+  );
+  const specs = el("div", null, "card-specs"),
+    power = el("span", null, "power-spec");
+  power.append(
+    icon("bolt"),
+    document.createTextNode(s.max_power_kw ?? "—"),
+    el("small", "kW"),
+  );
+  specs.append(power, el("span", null, "spec-divider"));
+  for (const connector of (s.connectors?.length
+    ? s.connectors
+    : ["Unknown"]
+  ).slice(0, 2))
+    specs.append(el("span", connector, "connector-badge"));
+  specs.append(el("span", `${s.points ?? "—"} points`, "points-label"));
+  const bottom = el("div", null, "card-bottom"),
+    details = button("View station", () => showDetail(s), "card-link", "arrow");
+  details.setAttribute("aria-label", `View details for ${s.name}`);
+  const compare = button(
+    "",
+    () => toggleCompare(s),
+    "icon-button compare-button",
+    "layers",
+  );
+  compare.setAttribute("aria-label", `Compare ${s.name}`);
+  compare.setAttribute(
+    "aria-pressed",
+    state.comparison.some((x) => x.id === s.id),
+  );
+  const saved = state.favorites.some((x) => x.id === s.id),
+    favorite = button(
+      "",
+      () => toggleFavorite(s),
+      `icon-button ${saved ? "saved" : ""}`,
+      "heart",
+    );
+  favorite.setAttribute("aria-label", `${saved ? "Unsave" : "Save"} ${s.name}`);
+  favorite.setAttribute("aria-pressed", saved);
+  bottom.append(details, compare, favorite);
+  article.append(top, status(s), specs);
+  if (vehicle())
+    article.append(
+      el(
+        "p",
+        compatibilityLabel(compatibility(vehicle(), s).physical),
+        "assumptions",
+      ),
+    );
+  if (s.fictional)
+    bottom.insertBefore(el("span", "FICTIONAL", "fictional-label"), compare);
+  article.append(bottom);
+  return article;
+}
+function render() {
+  filterStations();
+  $("#result-title").textContent =
+    `${state.filtered.length} station${state.filtered.length === 1 ? "" : "s"} nearby`;
+  $("#result-subtitle").textContent =
+    "Straight-line distance · not live occupancy";
+  const results = $("#results");
+  results.replaceChildren(...state.filtered.map(card));
+  if (!state.filtered.length) {
+    const empty = el("div", null, "empty-state");
+    empty.append(
+      icon("search"),
+      el("h3", "A little further, perhaps?"),
+      el(
+        "p",
+        "No matching stations. Try a wider radius or clear your filters.",
+      ),
+      button("Clear filters", resetFilters, "text-button"),
+    );
+    results.append(empty);
+  }
+  $("#comparison-tray").hidden = !state.comparison.length;
+  $("#comparison-count").textContent =
+    `${state.comparison.length} of 3 stations`;
+  $("#demo-banner").hidden = !state.demo;
+  $("#garage-label").textContent = vehicle()
+    ? `${vehicle().make} ${vehicle().model}`
+    : "My garage";
+  updateMapData();
+}
+function clearDetail() {
+  state.selected = null;
+  $("#detail").hidden = true;
+  $("#results").hidden = false;
+  render();
+}
+function resetFilters() {
+  for (const id of ["power", "operational"])
+    $("#" + id).setAttribute("aria-pressed", "false");
+  $("#connector").value = "";
+  $("#network").value = "";
+  for (const id of ["compatible", "favorites-only", "preferred-only"])
+    $("#" + id).checked = false;
+  clearDetail();
+}
+$("#reset-filters").onclick = resetFilters;
+for (const id of ["power", "operational"])
+  $("#" + id).onclick = () => {
+    $("#" + id).setAttribute(
+      "aria-pressed",
+      $("#" + id).getAttribute("aria-pressed") !== "true",
+    );
+    clearDetail();
+  };
+for (const id of [
+  "connector",
+  "network",
+  "compatible",
+  "favorites-only",
+  "preferred-only",
+  "sort",
+])
+  $("#" + id).onchange = () => {
+    clearDetail();
+    $("#message").textContent =
+      "Filters apply to the retrieved subset, not every station in this area.";
+  };
+$("#filters-toggle").onclick = () => {
+  const expanded = $("#filters-panel").hidden;
+  $("#filters-panel").hidden = !expanded;
+  $("#filters-toggle").setAttribute("aria-expanded", expanded);
+};
+$("#favorites-nav").onclick = () => {
+  $("#favorites-only").checked = !$("#favorites-only").checked;
+  $("#filters-panel").hidden = false;
+  $("#filters-toggle").setAttribute("aria-expanded", "true");
+  clearDetail();
+  if (innerWidth <= 800) setSheet(true);
+};
+function updateNetworkOptions() {
+  const current = $("#network").value;
+  $("#network").replaceChildren(new Option("All networks", ""));
+  for (const name of [...new Set(state.stations.map(networkName))].sort())
+    $("#network").add(new Option(name, name));
+  $("#network").value = current;
+  if ($("#network").selectedIndex < 0) $("#network").value = "";
+}
+function setSheet(expanded) {
+  $(".sidebar").classList.toggle("expanded", expanded);
+  $("#sheet-toggle").setAttribute("aria-expanded", expanded);
+  $("#sheet-toggle").textContent = expanded
+    ? "Collapse station list"
+    : "Expand station list";
+}
+$("#sheet-toggle").onclick = () =>
+  setSheet(!$(".sidebar").classList.contains("expanded"));
+function setListMode(list) {
+  $(".workspace").classList.toggle("list-only", list);
+  $("#list-view").setAttribute("aria-pressed", list);
+  $("#map-view").setAttribute("aria-pressed", !list);
+  if (!list) {
+    map?.resize();
+    setSheet(false);
+  }
+  save("list", list);
+}
+$("#list-view").onclick = () => setListMode(true);
+$("#map-view").onclick = () => setListMode(false);
+const mapStyle = () =>
+  `https://tiles.openfreemap.org/styles/${document.documentElement.dataset.theme === "dark" ? "dark" : "positron"}`;
+function mapFallback(message) {
+  mapFailed = true;
+  $("#map-warning").textContent = message;
+  $("#map-warning").hidden = false;
+  for (const id of ["pitch", "recenter", "fit"]) $("#" + id).disabled = true;
+  if (!map) {
+    $(".map-fallback p").textContent = message;
+    $(".map-fallback h2").textContent = "The list is ready when you are.";
+  }
+}
+function initMap() {
+  if (!window.maplibregl)
+    return mapFallback(
+      "Map unavailable on this device. Use the fully functional station list.",
+    );
+  try {
+    map = new maplibregl.Map({
+      container: "map",
+      style: mapStyle(),
+      center: [state.center[1], state.center[0]],
+      zoom: 13.2,
+      maxZoom: 18,
+      pitch: 0,
+      attributionControl: { compact: true },
+      canvasContextAttributes: { antialias: false },
+      maxTileCacheSize: 60,
+    });
+    map.addControl(
+      new maplibregl.NavigationControl({ showZoom: false, showCompass: true }),
+      "top-right",
+    );
+    map.addControl(
+      new maplibregl.ScaleControl({ unit: "imperial", maxWidth: 80 }),
+    );
+    map.on("style.load", () => {
+      mapFailed = false;
+      $("#map-warning").hidden = true;
+      for (const id of ["pitch", "recenter", "fit"])
+        $("#" + id).disabled = false;
+      setupMapLayers();
+    });
+    map.on("dragend", () => ($("#search-area").hidden = false));
+    map.on("zoomend", updateMarkers);
+    map.on("moveend", updateMarkers);
+    map.on("sourcedata", (e) => {
+      if (e.sourceId === "stations") updateMarkers();
+    });
+    map.on("error", () => {
+      if (!map.isStyleLoaded()) {
+        mapFallback(
+          "Some map tiles could not load. Station results are unaffected. Switch to List for a low-power experience.",
+        );
+      }
+    });
+    map
+      .getCanvas()
+      .addEventListener("webglcontextlost", () =>
+        mapFallback(
+          "Map graphics are unavailable. Station results and directions remain accessible in List mode.",
+        ),
+      );
+  } catch {
+    mapFallback(
+      "Map graphics are unavailable. Station search still works in List mode.",
+    );
+  }
+}
+function setupMapLayers() {
+  if (!map.getSource("stations"))
+    map.addSource("stations", {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: [] },
+      cluster: true,
+      clusterRadius: 48,
+      clusterMaxZoom: 12,
+    });
+  if (!map.getLayer("station-source-loader"))
+    map.addLayer({
+      id: "station-source-loader",
+      type: "circle",
+      source: "stations",
+      paint: { "circle-radius": 0, "circle-opacity": 0 },
+    });
+  if (!map.getSource("radius"))
+    map.addSource("radius", { type: "geojson", data: radiusGeoJSON() });
+  if (!map.getLayer("radius-fill"))
+    map.addLayer({
+      id: "radius-fill",
+      type: "fill",
+      source: "radius",
+      paint: { "fill-color": "#3a7954", "fill-opacity": 0.035 },
+    });
+  if (!map.getLayer("radius-line"))
+    map.addLayer({
+      id: "radius-line",
+      type: "line",
+      source: "radius",
+      paint: {
+        "line-color": "#4a815d",
+        "line-width": 1.4,
+        "line-dasharray": [4, 4],
+        "line-opacity": 0.65,
+      },
+    });
+  const style = map.getStyle(),
+    building = style.layers.find((l) => l["source-layer"] === "building");
+  if (building && !map.getLayer("current-buildings"))
+    map.addLayer({
+      id: "current-buildings",
+      type: "fill-extrusion",
+      source: building.source,
+      "source-layer": "building",
+      minzoom: 14,
+      layout: {
+        visibility:
+          $("#pitch").getAttribute("aria-pressed") === "true"
+            ? "visible"
+            : "none",
+      },
+      paint: {
+        "fill-extrusion-color":
+          document.documentElement.dataset.theme === "dark"
+            ? "#465449"
+            : "#d6ded3",
+        "fill-extrusion-height": [
+          "coalesce",
+          ["get", "render_height"],
+          ["get", "height"],
+          8,
+        ],
+        "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
+        "fill-extrusion-opacity": 0.72,
+      },
+    });
+  if (config.terrain_url && !map.getSource("terrain")) {
+    map.addSource("terrain", {
+      type: "raster-dem",
+      url: config.terrain_url,
+      tileSize: 256,
+    });
+    $("#terrain").hidden = false;
+  }
+  if (config.satellite_url && !map.getSource("satellite")) {
+    map.addSource("satellite", {
+      type: "raster",
+      tiles: [config.satellite_url],
+      tileSize: 256,
+      attribution:
+        config.satellite_attribution || "Configured satellite provider",
+    });
+    map.addLayer(
+      {
+        id: "satellite-layer",
+        type: "raster",
+        source: "satellite",
+        layout: { visibility: "none" },
+      },
+      "radius-fill",
+    );
+    $("#satellite").hidden = false;
+  }
+  updateMapData();
+  drawRoute();
+}
+function radiusGeoJSON() {
+  const [lat, lon] = state.center,
+    coords = [],
+    angular = state.radius / 3958.7613,
+    rad = Math.PI / 180;
+  for (let i = 0; i <= 90; i++) {
+    const bearing = (i / 90) * Math.PI * 2,
+      phi = lat * rad,
+      lambda = lon * rad;
+    const p = Math.asin(
+      Math.sin(phi) * Math.cos(angular) +
+        Math.cos(phi) * Math.sin(angular) * Math.cos(bearing),
+    );
+    const l =
+      lambda +
+      Math.atan2(
+        Math.sin(bearing) * Math.sin(angular) * Math.cos(phi),
+        Math.cos(angular) - Math.sin(phi) * Math.sin(p),
+      );
+    coords.push([l / rad, p / rad]);
+  }
+  return {
+    type: "Feature",
+    properties: {},
+    geometry: { type: "Polygon", coordinates: [coords] },
+  };
+}
+function updateMapData() {
+  if (!map?.getSource("stations")) return;
+  map
+    .getSource("stations")
+    .setData({
+      type: "FeatureCollection",
+      features: state.filtered.map((s) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [s.longitude, s.latitude] },
+        properties: { id: String(s.id) },
+      })),
+    });
+  map.getSource("radius")?.setData(radiusGeoJSON());
+  updateMarkers();
+}
+function updateMarkers() {
+  if (!map?.getSource("stations") || !map.isSourceLoaded("stations")) return;
+  markers.forEach((m) => m.remove());
+  markers = [];
+  const features = map.querySourceFeatures("stations"),
+    seen = new Set();
+  for (const feature of features) {
+    const p = feature.properties,
+      key = p.cluster ? `c${p.cluster_id}` : `s${p.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    let node;
+    if (p.cluster) {
+      node = button(
+        String(p.point_count),
+        async () => {
+          try {
+            const zoom = await map
+              .getSource("stations")
+              .getClusterExpansionZoom(p.cluster_id);
+            map.easeTo({
+              center: feature.geometry.coordinates,
+              zoom,
+              duration: motion() ? 450 : 0,
+            });
+          } catch {
+            toast("Zoom in to explore this cluster.");
+          }
+        },
+        "cluster-pin",
+      );
+      node.setAttribute(
+        "aria-label",
+        `Expand cluster of ${p.point_count} stations`,
+      );
+    } else {
+      const s = state.filtered.find((s) => String(s.id) === String(p.id));
+      if (!s) continue;
+      node = button(
+        state.selected === s.id ? `${s.max_power_kw ?? "—"} kW` : "",
+        () => showDetail(s),
+        `station-pin ${s.operational === false ? "unavailable" : s.operational === true ? "" : "unknown"} ${state.selected === s.id ? "selected" : ""}`,
+        "bolt",
+      );
+      node.setAttribute(
+        "aria-label",
+        `${s.name}, ${s.status}, ${s.max_power_kw ?? "unknown"} kW`,
+      );
+    }
+    markers.push(
+      new maplibregl.Marker({ element: node, anchor: "bottom" })
+        .setLngLat(feature.geometry.coordinates)
+        .addTo(map),
+    );
+  }
+}
+const motion = () => !matchMedia("(prefers-reduced-motion: reduce)").matches;
+function fitResults() {
+  if (!map || !state.filtered.length) return;
+  const bounds = new maplibregl.LngLatBounds();
+  state.filtered.forEach((s) => bounds.extend([s.longitude, s.latitude]));
+  map.fitBounds(bounds, {
+    padding: {
+      top: 150,
+      right: 75,
+      bottom:
+        innerWidth <= 800
+          ? Math.round($(".workspace").clientHeight * 0.5)
+          : 120,
+      left: 65,
+    },
+    maxZoom: 14,
+    duration: motion() ? 450 : 0,
+  });
+}
+$("#fit").onclick = fitResults;
+$("#recenter").onclick = () =>
+  map?.easeTo({
+    center: [state.center[1], state.center[0]],
+    zoom: 13.2,
+    bearing: 0,
+    duration: motion() ? 450 : 0,
+  });
+$("#pitch").onclick = () => {
+  if (!map) return;
+  const pitched = $("#pitch").getAttribute("aria-pressed") !== "true";
+  $("#pitch").setAttribute("aria-pressed", pitched);
+  map.easeTo({
+    pitch: pitched ? 55 : 0,
+    zoom: pitched ? Math.max(14.5, map.getZoom()) : map.getZoom(),
+    duration: motion() ? 600 : 0,
+  });
+  if (map.getLayer("current-buildings"))
+    map.setLayoutProperty(
+      "current-buildings",
+      "visibility",
+      pitched ? "visible" : "none",
+    );
+  else if (pitched)
+    toast(
+      "Pitched view enabled. Building geometry is unavailable in this style.",
+    );
+};
+$("#terrain").onclick = () => {
+  const active = $("#terrain").getAttribute("aria-pressed") !== "true";
+  $("#terrain").setAttribute("aria-pressed", active);
+  map.setTerrain(active ? { source: "terrain", exaggeration: 1 } : null);
+};
+$("#satellite").onclick = () => {
+  const active = $("#satellite").getAttribute("aria-pressed") !== "true";
+  $("#satellite").setAttribute("aria-pressed", active);
+  map.setLayoutProperty(
+    "satellite-layer",
+    "visibility",
+    active ? "visible" : "none",
+  );
+};
+$("#search-area").onclick = () => {
+  const p = map.getCenter();
+  $("#location-mode").value = "coordinates";
+  updateMode();
+  $("[name=latitude]").value = p.lat.toFixed(5);
+  $("[name=longitude]").value = p.lng.toFixed(5);
+  search();
+};
+async function api(path, data, signal) {
+  const response = await fetch(new URL(path, document.baseURI), {
+    method: data ? "POST" : "GET",
+    headers: data ? { "Content-Type": "application/json" } : {},
+    body: data ? JSON.stringify(data) : undefined,
+    signal,
+  });
+  const result = await response.json();
+  if (!response.ok)
+    throw Error(
+      result.error ||
+        result.detail?.[0]?.msg ||
+        `Request failed (${response.status}). Please try again.`,
+    );
+  return result;
+}
+async function demoSearch(data) {
+  let center;
+  if (data.location_mode === "zip") {
+    if (!/^\d{5}$/.test(data.zip_code))
+      throw Error("Enter a five-digit US ZIP code.");
+    if (data.zip_code !== "10036")
+      throw Error(
+        "Offline demo supports ZIP 10036 only. Try coordinates or enable live search.",
+      );
+    center = [40.758, -73.9855];
+  } else center = [Number(data.latitude), Number(data.longitude)];
+  const radius = Number(data.radius);
+  if (
+    !center.every(Number.isFinite) ||
+    Math.abs(center[0]) > 90 ||
+    Math.abs(center[1]) > 180 ||
+    !Number.isFinite(radius) ||
+    radius <= 0 ||
+    radius > 100
+  )
+    throw Error("Enter valid coordinates and a radius from 1 to 100 miles.");
+  const response = await fetch(new URL("./demo.json", import.meta.url));
+  if (!response.ok)
+    throw Error(
+      "Offline demo data could not load. Reconnect once to cache the interface.",
+    );
+  const records = await response.json();
+  return {
+    stations: records
+      .map((s) => ({
+        ...s,
+        distance_miles: milesBetween(center, [s.latitude, s.longitude]),
+      }))
+      .filter((s) => s.distance_miles <= radius)
+      .sort((a, b) => a.distance_miles - b.distance_miles),
+    center,
+    location: "Midtown Manhattan · fictional demo",
+    demo: true,
+    retrieved_at: new Date().toISOString(),
+  };
+}
+function searchValues() {
+  const values = Object.fromEntries(new FormData($("#search")));
+  values.demo = $("[name=demo]").checked;
+  return values;
+}
+async function search(override = {}) {
+  const id = ++requestNumber;
+  controller?.abort();
+  controller = new AbortController();
+  const data = { ...searchValues(), ...override };
+  $("#submit").disabled = true;
+  $("#message").classList.remove("error");
+  $("#message").textContent = "Finding your next charge…";
+  $("#retry").hidden = true;
+  $("#results").setAttribute("aria-busy", "true");
+  if (!state.stations.length)
+    $("#results").replaceChildren(
+      ...Array.from({ length: 3 }, () => el("div", null, "skeleton")),
+    );
+  try {
+    const result = data.demo
+      ? await demoSearch(data)
+      : await api("api/search", data, controller.signal);
+    if (id !== requestNumber) return;
+    state.stations = result.stations;
+    state.center = result.center;
+    state.radius = Number(data.radius);
+    state.demo = result.demo;
+    state.retrieved = result.retrieved_at;
+    save("last-results", { ...result, radius: state.radius });
+    updateNetworkOptions();
+    clearDetail();
+    $("#message").textContent = result.demo
+      ? "Fictional examples · not real charging locations."
+      : `Retrieved ${new Date(result.retrieved_at).toLocaleString()} · Up to 100 reported stations. Live availability unavailable.`;
+    $("#map-location").textContent = result.demo
+      ? "Midtown Manhattan"
+      : result.location;
+    $("#map-location-sub").textContent = result.demo
+      ? "New York, United States"
+      : "Approximate search center";
+    $("#radius-label").textContent = `${state.radius} mi radius`;
+    $("#search-area").hidden = true;
+    fitResults();
+  } catch (error) {
+    if (error.name !== "AbortError" && id === requestNumber) {
+      $("#message").textContent =
+        `${error.message} Previous results are preserved.`;
+      $("#message").classList.add("error");
+      $("#retry").hidden = false;
+      if (!state.stations.length) render();
+    }
+  } finally {
+    if (id === requestNumber) {
+      $("#submit").disabled = false;
+      $("#results").removeAttribute("aria-busy");
+    }
+  }
+}
+$("#search").onsubmit = (e) => {
+  e.preventDefault();
+  search();
+};
+$("#retry").onclick = () => search();
+$("#locate").onclick = () => {
+  if (!navigator.geolocation)
+    return toast("Location is unavailable. Enter a ZIP code instead.");
+  navigator.geolocation.getCurrentPosition(
+    (p) => {
+      $("#location-mode").value = "coordinates";
+      updateMode();
+      $("[name=latitude]").value = p.coords.latitude;
+      $("[name=longitude]").value = p.coords.longitude;
+      search();
+    },
+    () =>
+      toast("Location permission unavailable. Search with a ZIP code instead."),
+    { timeout: 10000 },
+  );
+};
+function infoRow(container, label, value) {
+  const row = el("div", null, "info-row");
+  row.append(el("span", label), el("strong", value ?? "Not provided"));
+  container.append(row);
+}
+function showDetail(s) {
+  state.selected = s.id;
+  render();
+  const panel = $("#detail");
+  panel.replaceChildren();
+  const back = button(
+    "Back to stations",
+    () => {
+      clearDetail();
+      $(`[data-station="${CSS.escape(String(s.id))}"] .card-link`)?.focus();
+    },
+    "back",
+    "arrow",
+  );
+  panel.append(back, el("h2", stationName(s)), el("p", s.address), status(s));
+  if (s.fictional)
+    panel.append(
+      el(
+        "div",
+        "FICTIONAL DEMO · Do not travel to this example location.",
+        "notice warning",
+      ),
+    );
+  const metrics = el("div", null, "detail-metrics");
+  for (const [value, label] of [
+    [`${s.max_power_kw ?? "—"} kW`, "maximum advertised power"],
+    [
+      `${Number.isFinite(s.distance_miles) ? s.distance_miles.toFixed(1) : "—"} mi`,
+      "straight-line distance",
+    ],
+  ]) {
+    const box = el("div");
+    box.append(el("strong", value), el("small", label));
+    metrics.append(box);
+  }
+  panel.append(metrics);
+  const actions = el("div", null, "detail-actions");
+  if (!s.fictional)
+    actions.append(
+      link(
+        "Get directions",
+        `https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}`,
+        "primary",
+      ),
+    );
+  actions.append(
+    button("Estimate charge", () => openEstimator(s), "secondary", "bolt"),
+  );
+  panel.append(actions);
+  panel.append(el("h3", "Connections & compatibility"));
+  const comp = compatibility(vehicle(), s);
+  for (const c of s.connections || []) {
+    const row = el("div", null, "connection-row");
+    row.append(
+      el("strong", CONNECTOR_LABELS[c.connector] || "Unknown connector"),
+      el("span", `${c.current_type || "Unknown"} · ${c.power_kw ?? "—"} kW`),
+      el(
+        "small",
+        `${c.quantity ?? "Unknown"} reported connectors · ${c.voltage ?? "—"} V · ${c.amps ?? "—"} A`,
+      ),
+    );
+    const rule = comp.connections.find(
+      (x) => x.connector === c.connector && x.current_type === c.current_type,
+    );
+    if (rule)
+      row.append(
+        el("small", `${compatibilityLabel(rule.physical)} — ${rule.reason}`),
+      );
+    panel.append(row);
+  }
+  if (!s.connections?.length)
+    panel.append(el("p", "Connection details not provided."));
+  panel.append(
+    el(
+      "p",
+      `${s.points ?? "Unknown"} charging points reported. Connector quantity is not a count of simultaneously usable parking spaces.`,
+    ),
+  );
+  panel.append(
+    button(
+      vehicle() ? "Edit my vehicle" : "Add a vehicle for compatibility",
+      openGarage,
+      "text-button",
+      "car",
+    ),
+  );
+  panel.append(
+    el(
+      "div",
+      `Network access: ${comp.network === "allowed" ? "recorded by you; verify with operator" : "unknown"}. Physical fit does not establish network authorization. A NACS inlet alone does not establish Supercharger access.`,
+      "notice",
+    ),
+  );
+  panel.append(el("h3", "Before you go"));
+  infoRow(panel, "Network / operator", networkName(s));
+  infoRow(panel, "Station host", s.host);
+  infoRow(panel, "Reported access", s.access);
+  infoRow(panel, "Reported opening hours", s.hours);
+  infoRow(
+    panel,
+    "Membership",
+    s.membership_required === true
+      ? "Reported required"
+      : s.membership_required === false
+        ? "Reported not required"
+        : "Unknown",
+  );
+  panel.append(
+    el(
+      "p",
+      s.access_comments ||
+        "No additional access notes supplied. Missing information does not mean public access.",
+    ),
+  );
+  panel.append(
+    el("h3", "Reported pricing"),
+    el("p", s.pricing || "Price not provided"),
+    el(
+      "p",
+      `Source: ${s.provider || "Unknown provider"}. Pricing text is not a verified structured tariff; fees may apply.`,
+    ),
+    el("h3", "Data, not guesswork"),
+    el(
+      "div",
+      "Live availability unavailable. Reported operational status is not real-time occupancy or a guarantee that equipment works now.",
+      "notice warning",
+    ),
+  );
+  infoRow(panel, "Last verified", dateLabel(s.verified));
+  infoRow(panel, "Last updated", dateLabel(s.updated));
+  const fields = [
+      s.max_power_kw,
+      s.connections?.length,
+      s.access,
+      s.hours,
+      s.verified,
+      s.updated,
+    ],
+    complete = fields.filter(Boolean).length;
+  panel.append(
+    el(
+      "p",
+      `${complete} of 6 detail fields supplied — completeness, not reliability.`,
+    ),
+  );
+  const bar = el("div", null, "quality-bar"),
+    fill = el("span");
+  fill.style.width = `${(complete / 6) * 100}%`;
+  bar.append(fill);
+  panel.append(
+    bar,
+    el(
+      "p",
+      "Old or missing verification dates increase uncertainty. Confirm access and equipment with the operator. Photos, site geometry and amenities are omitted when licensed, verified evidence is unavailable.",
+    ),
+  );
+  if (s.source_url)
+    panel.append(link("View source / report incorrect data", s.source_url));
+  panel.append(
+    el(
+      "p",
+      `Provider: ${s.provider || "Unknown"} · ${s.license || "See source licensing."}`,
+    ),
+  );
+  const tools = el("div", null, "detail-actions");
+  tools.append(
+    button("Share station", () => shareStation(s), "secondary", "external"),
+    button(
+      "Add to trip",
+      () => {
+        if (s.fictional)
+          return toast("Fictional demo stations cannot be navigation stops.");
+        if (!state.tripStops.some((x) => x.id === s.id))
+          state.tripStops.push(s);
+        toast("Added to your trip on this device.");
+      },
+      "secondary",
+      "route",
+    ),
+  );
+  panel.append(tools);
+  if (map)
+    panel.append(
+      button(
+        "Show on map",
+        () => {
+          setSheet(false);
+          map.flyTo({
+            center: [s.longitude, s.latitude],
+            zoom: Math.max(map.getZoom(), 14),
+            offset:
+              innerWidth <= 800
+                ? [0, -$(".workspace").clientHeight * 0.22]
+                : [0, 0],
+            duration: state.fly && motion() ? 900 : 0,
+          });
+        },
+        "text-button",
+        "pin",
+      ),
+    );
+  $("#results").hidden = true;
+  panel.hidden = false;
+  panel.scrollTop = 0;
+  back.focus({ preventScroll: true });
+  if (innerWidth <= 800) setSheet(false);
+  state.recent = [
+    { ...s, viewed_at: new Date().toISOString() },
+    ...state.recent.filter((x) => x.id !== s.id),
+  ].slice(0, 12);
+  save("recent", state.recent);
+  // Preserve desktop position; on mobile, only move when the selected pin would be covered.
+  if (
+    map &&
+    innerWidth <= 800 &&
+    !$(".workspace").classList.contains("list-only")
+  ) {
+    const point = map.project([s.longitude, s.latitude]),
+      height = $(".workspace").clientHeight,
+      visibleBottom = height * 0.54 - 35;
+    if (
+      point.y > visibleBottom ||
+      point.y < 140 ||
+      point.x < 30 ||
+      point.x > innerWidth - 65
+    )
+      map.easeTo({
+        center: [s.longitude, s.latitude],
+        offset: [0, -height * 0.22],
+        duration: 0,
+      });
+  }
+}
+async function shareURL(url) {
+  try {
+    await navigator.clipboard.writeText(url);
+    toast("Link copied. No API keys or personal history included.");
+  } catch {
+    const body = openModal("Share this link");
+    const input = el("input");
+    input.value = url;
+    input.readOnly = true;
+    input.style.width = "100%";
+    body.append(input);
+    input.select();
+  }
+}
+function shareStation(s) {
+  const url = new URL(location.pathname, location.origin);
+  url.searchParams.set("station", s.id);
+  shareURL(url.href);
+}
+async function openExplorer() {
+  const body = openModal("The connector lab"),
+    epoch = modalEpoch;
+  body.append(
+    el(
+      "p",
+      "A little understanding goes a long way. Loading original, illustrative connector diagrams…",
+    ),
+  );
+  try {
+    const module = await import("./explorer.js");
+    if (epoch !== modalEpoch) return;
+    body.replaceChildren();
+    const cleanup = await module.mountExplorer(body);
+    if (epoch !== modalEpoch) cleanup();
+    else explorerCleanup = cleanup;
+  } catch {
+    if (epoch === modalEpoch)
+      body.replaceChildren(
+        el(
+          "div",
+          "Connector studio could not load. NACS and CCS1 support DC charging when the vehicle and network permit it. J1772 is AC. CHAdeMO is DC. Confirm exact vehicle compatibility with its manufacturer.",
+          "notice",
+        ),
+      );
+  }
+}
+$("#learn-nav").onclick = openExplorer;
+$("#learn-card").onclick = openExplorer;
+$("#garage-nav").onclick = openGarage;
+$("#explore-nav").onclick = () => {
+  closeModal();
+  resetFilters();
+};
+function inputField(form, label, name, value = "", type = "text", attrs = {}) {
+  const wrap = el("label", label);
+  const input = el("input");
+  Object.assign(input, { name, type, value, ...attrs });
+  wrap.append(input);
+  form.append(wrap);
+  return input;
+}
+function selectField(form, label, name, options, value) {
+  const wrap = el("label", label),
+    select = el("select");
+  select.name = name;
+  for (const entry of options) {
+    const [val, text] = Array.isArray(entry) ? entry : [entry, entry];
+    select.add(new Option(text, val));
+  }
+  if (value != null) select.value = value;
+  wrap.append(select);
+  form.append(wrap);
+  return select;
+}
+function openGarage(editId) {
+  const body = openModal("Your car. Your kind of charge.");
+  body.append(
+    el(
+      "p",
+      "A private, local garage. No account, no inferred specifications. Use your owner’s manual or manufacturer documentation; entries below are user-supplied, not independently verified.",
+    ),
+  );
+  const saved = el("div", null, "vehicle-list");
+  for (const v of state.vehicles) {
+    const item = el(
+        "div",
+        null,
+        `vehicle-card ${v.id === state.activeVehicle ? "active" : ""}`,
+      ),
+      choose = button(
+        `${v.make} ${v.model}`,
+        () => {
+          state.activeVehicle = v.id;
+          save("active-vehicle", v.id);
+          render();
+          openGarage();
+        },
+        "text-button",
+        "car",
+      );
+    item.append(
+      choose,
+      button("Edit", () => openGarage(v.id), "text-button"),
+      button(
+        "Remove",
+        () => {
+          state.vehicles = state.vehicles.filter((x) => x.id !== v.id);
+          if (state.activeVehicle === v.id)
+            state.activeVehicle = state.vehicles[0]?.id ?? null;
+          save("vehicles", state.vehicles);
+          save("active-vehicle", state.activeVehicle);
+          render();
+          openGarage();
+        },
+        "text-button",
+      ),
+    );
+    saved.append(item);
+  }
+  body.append(saved);
+  const silhouette = el("div", null, "garage-silhouette");
+  silhouette.innerHTML =
+    '<svg viewBox="0 0 180 75" aria-label="Generic vehicle silhouette, not a specific model"><path d="m16 49 7-18 31-5 20-17h44l24 19 23 6 6 18H15Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="m60 27 18-13h35l18 13Z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="46" cy="51" r="12" fill="var(--surface)" stroke="currentColor" stroke-width="2"/><circle cx="139" cy="51" r="12" fill="var(--surface)" stroke="currentColor" stroke-width="2"/></svg>';
+  silhouette.append(
+    el(
+      "p",
+      "Generic silhouette. Specifications and charging-port geometry vary by vehicle.",
+    ),
+  );
+  body.append(silhouette);
+  const editing = state.vehicles.find((v) => v.id === editId),
+    form = el("form"),
+    grid = el("div", null, "form-grid");
+  inputField(grid, "Make", "make", editing?.make || "", "text", {
+    required: true,
+    maxLength: 60,
+    placeholder: "e.g. Hyundai",
+  });
+  inputField(grid, "Model", "model", editing?.model || "", "text", {
+    required: true,
+    maxLength: 60,
+    placeholder: "e.g. IONIQ 5",
+  });
+  inputField(grid, "Model year", "year", editing?.year || "", "number", {
+    min: 1990,
+    max: new Date().getFullYear() + 2,
+    required: true,
+  });
+  inputField(grid, "Trim (optional)", "trim", editing?.trim || "", "text", {
+    maxLength: 60,
+  });
+  selectField(
+    grid,
+    "Vehicle inlet",
+    "inlet",
+    CONNECTORS.map((c) => [c, CONNECTOR_LABELS[c]]),
+    editing?.connectors?.[0] || "CCS1",
+  );
+  inputField(
+    grid,
+    "Usable battery capacity (kWh)",
+    "battery_kwh",
+    editing?.battery_kwh ?? "",
+    "number",
+    { min: 1, max: 500, step: "any", placeholder: "From a verified source" },
+  );
+  inputField(
+    grid,
+    "Maximum AC power (kW)",
+    "max_ac_kw",
+    editing?.max_ac_kw ?? "",
+    "number",
+    { min: 0, max: 100, step: "any" },
+  );
+  inputField(
+    grid,
+    "Maximum DC power (kW)",
+    "max_dc_kw",
+    editing?.max_dc_kw ?? "",
+    "number",
+    { min: 0, max: 1000, step: "any" },
+  );
+  inputField(
+    grid,
+    "Consumption (kWh / 100 mi)",
+    "consumption_kwh_per_100_miles",
+    editing?.consumption_kwh_per_100_miles ?? "",
+    "number",
+    { min: 1, max: 200, step: "any" },
+  );
+  inputField(
+    grid,
+    "Specification source URL or reference",
+    "source",
+    editing?.source || "",
+    "text",
+    { required: true, maxLength: 500 },
+  );
+  inputField(
+    grid,
+    "Source checked on",
+    "source_date",
+    editing?.source_date || new Date().toISOString().slice(0, 10),
+    "date",
+    { required: true },
+  );
+  form.append(grid);
+  const adapterSection = el("div", null, "form-section");
+  adapterSection.append(
+    el("h3", "Adapters you own"),
+    el(
+      "p",
+      "Record only adapters approved for your vehicle and current type. This is not a safety certification.",
+      "assumptions",
+    ),
+  );
+  const adapterList = el("div", null, "adapter-list");
+  const addAdapter = (a = {}) => {
+    const row = el("div", null, "adapter-row");
+    selectField(
+      row,
+      "Charger connector",
+      "adapter_from",
+      CONNECTORS,
+      a.from || "NACS",
+    );
+    selectField(row, "Vehicle inlet", "adapter_to", CONNECTORS, a.to || "CCS1");
+    selectField(
+      row,
+      "Current",
+      "adapter_current",
+      ["AC", "DC"],
+      a.current_type || "DC",
+    );
+    row.append(button("Remove", () => row.remove(), "text-button"));
+    adapterList.append(row);
+  };
+  for (const a of editing?.adapters || []) addAdapter(a);
+  adapterSection.append(
+    adapterList,
+    button("Add an adapter", () => addAdapter(), "text-button", "plug"),
+  );
+  form.append(adapterSection);
+  const access = el("div", null, "form-section");
+  access.append(
+    el("h3", "Network access is separate"),
+    el(
+      "p",
+      "Enter networks for which you have independently confirmed authorization. A NACS inlet does not guarantee Supercharger access.",
+      "assumptions",
+    ),
+  );
+  inputField(
+    access,
+    "Confirmed networks, separated by commas",
+    "networks",
+    editing?.networks?.join(", ") || "",
+  );
+  form.append(access);
+  const error = el("p", null, "message error");
+  error.setAttribute("role", "alert");
+  form.append(error);
+  const actions = el("div", null, "form-actions"),
+    submit = el(
+      "button",
+      editing ? "Save vehicle changes" : "Add to my garage",
+      "primary",
+    );
+  submit.type = "submit";
+  actions.append(submit);
+  form.append(actions);
+  body.append(form);
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const values = Object.fromEntries(new FormData(form)),
+      v = {
+        ...values,
+        id: editing?.id || crypto.randomUUID(),
+        connectors: [values.inlet],
+        networks: values.networks
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean),
+        adapters: $$(".adapter-row", adapterList).map((row) => ({
+          from: $("[name=adapter_from]", row).value,
+          to: $("[name=adapter_to]", row).value,
+          current_type: $("[name=adapter_current]", row).value,
+        })),
+      };
+    for (const key of [
+      "battery_kwh",
+      "max_ac_kw",
+      "max_dc_kw",
+      "consumption_kwh_per_100_miles",
+    ])
+      v[key] = values[key] === "" ? null : Number(values[key]);
+    delete v.adapter_from;
+    delete v.adapter_to;
+    delete v.adapter_current;
+    delete v.inlet;
+    state.vehicles = [...state.vehicles.filter((x) => x.id !== v.id), v];
+    state.activeVehicle = v.id;
+    save("vehicles", state.vehicles);
+    save("active-vehicle", v.id);
+    render();
+    toast("Vehicle saved on this device. Specifications remain user-supplied.");
+    openGarage();
+  };
+}
+function openEstimator(s, second) {
+  const body = openModal(
+    second ? "Compare charging stops" : "A clearer charging estimate",
+  );
+  body.append(
+    el(
+      "p",
+      "Constant-power approximation, not a charging prediction. Enter your vehicle’s specifications and your own tariff assumptions. No ambiguous station pricing text is parsed.",
+    ),
+  );
+  const v = vehicle(),
+    form = el("form"),
+    grid = el("div", null, "form-grid");
+  inputField(grid, "Starting battery (%)", "start", 20, "number", {
+    min: 0,
+    max: 99,
+    required: true,
+  });
+  inputField(grid, "Target battery (%)", "target", 80, "number", {
+    min: 1,
+    max: 100,
+    required: true,
+  });
+  inputField(
+    grid,
+    "Usable battery capacity (kWh)",
+    "battery",
+    v?.battery_kwh ?? "",
+    "number",
+    { min: 1, max: 500, step: "any", required: true },
+  );
+  const current = selectField(
+    grid,
+    "Charging current",
+    "current",
+    ["DC", "AC"],
+    s?.connections?.[0]?.current_type === "AC" ? "AC" : "DC",
+  );
+  const vehicleLimit = inputField(
+    grid,
+    "Vehicle charging limit (kW)",
+    "vehicle",
+    current.value === "DC" ? (v?.max_dc_kw ?? "") : (v?.max_ac_kw ?? ""),
+    "number",
+    { min: 0.1, max: 2000, step: "any", required: true },
+  );
+  inputField(
+    grid,
+    "Charger reported limit (kW)",
+    "charger",
+    s?.max_power_kw ?? "",
+    "number",
+    { min: 0.1, max: 2000, step: "any", required: true },
+  );
+  inputField(grid, "Charging efficiency (%)", "efficiency", 90, "number", {
+    min: 1,
+    max: 100,
+    step: "any",
+    required: true,
+  });
+  inputField(
+    grid,
+    "Vehicle consumption (kWh / 100 mi)",
+    "consumption",
+    v?.consumption_kwh_per_100_miles ?? 30,
+    "number",
+    { min: 1, max: 200, step: "any", required: true },
+  );
+  current.onchange = () =>
+    (vehicleLimit.value =
+      current.value === "DC" ? (v?.max_dc_kw ?? "") : (v?.max_ac_kw ?? ""));
+  for (const [name, label] of [
+    ["kwh_rate", "Energy rate ($ / kWh)"],
+    ["minute_rate", "Time rate ($ / minute)"],
+    ["session_fee", "Session fee ($)"],
+    ["parking_fee", "Parking fee ($)"],
+  ])
+    inputField(grid, label, name, "", "number", {
+      min: 0,
+      max: 10000,
+      step: "any",
+      placeholder: "Unknown; enter 0 if none",
+    });
+  form.append(
+    grid,
+    el(
+      "p",
+      "Leaving any fee blank makes the total unknown. Amounts are before tax; enter tax-inclusive rates if appropriate.",
+      "assumptions",
+    ),
+  );
+  if (second) {
+    const box = el("div", null, "form-section");
+    box.append(el("h3", `Second stop: ${stationName(second)}`));
+    inputField(
+      box,
+      "Second charger limit (kW)",
+      "second_power",
+      second.max_power_kw ?? "",
+      "number",
+      { min: 0.1, max: 2000, step: "any", required: true },
+    );
+    form.append(
+      box,
+      el(
+        "p",
+        "Both stops use the same vehicle, state of charge, efficiency and manually entered fees. This compares power, not verified real-world tariffs.",
+        "assumptions",
+      ),
+    );
+  }
+  const submit = el("button", "Calculate estimate", "primary");
+  submit.type = "submit";
+  const output = el("div");
+  output.setAttribute("aria-live", "polite");
+  form.append(el("div", null, "form-actions"));
+  $(".form-actions", form).append(submit);
+  body.append(form, output);
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    output.replaceChildren();
+    try {
+      const values = Object.fromEntries(new FormData(form));
+      for (const [station, input] of [
+        [s, values],
+        ...(second
+          ? [[second, { ...values, charger: values.second_power }]]
+          : []),
+      ]) {
+        const result = estimate(input);
+        output.append(
+          el("h3", station ? stationName(station) : "Your estimate"),
+        );
+        const stats = el("div", null, "estimate-results");
+        for (const [number, label] of [
+          [`${Math.ceil(result.minutes)} min`, "constant-power charging"],
+          [`${result.batteryEnergy.toFixed(1)} kWh`, "energy added to battery"],
+          [
+            result.total === null ? "Unknown" : `$${result.total.toFixed(2)}`,
+            "session cost · before tax",
+          ],
+        ]) {
+          const cell = el("div", null, "estimate-stat");
+          cell.append(el("strong", number), el("small", label));
+          stats.append(cell);
+        }
+        output.append(
+          stats,
+          el(
+            "p",
+            `Capped at ${result.power.toFixed(1)} kW (minimum of vehicle and charger). ${result.gridEnergy.toFixed(1)} kWh from charger at ${values.efficiency}% efficiency; approximately ${Math.round(result.miles)} miles added at ${values.consumption} kWh/100 mi.`,
+            "assumptions",
+          ),
+        );
+        for (const [label, value] of Object.entries(result.fees))
+          infoRow(
+            output,
+            `${label[0].toUpperCase() + label.slice(1)} charge`,
+            value === null ? "Not provided" : `$${value.toFixed(2)}`,
+          );
+        if (!result.complete)
+          output.append(
+            el(
+              "p",
+              `Known fees subtotal: $${result.known.toFixed(2)}. Missing fees prevent a complete cost estimate.`,
+              "assumptions",
+            ),
+          );
+      }
+      output.append(
+        el(
+          "div",
+          "Power tapers as the battery fills, especially at high state of charge. Temperature, battery conditioning, battery health, charger sharing and charging losses affect results. No verified vehicle-specific charging curve is configured.",
+          "notice warning",
+        ),
+      );
+    } catch (error) {
+      output.append(el("p", error.message, "message error"));
+    }
+  };
+}
+function openComparison() {
+  if (!state.comparison.length) return;
+  const body = openModal("A side-by-side look"),
+    wrap = el("div", null, "table-scroll"),
+    table = el("table", null, "comparison-table"),
+    head = el("tr");
+  head.append(el("th", "Station"));
+  state.comparison.forEach((s) => head.append(el("th", stationName(s))));
+  table.append(head);
+  for (const [label, value] of [
+    ["Reported status", (s) => s.status],
+    ["Maximum advertised power", (s) => `${s.max_power_kw ?? "Unknown"} kW`],
+    ["Connectors", (s) => s.connectors?.join(", ") || "Unknown"],
+    ["Charging points", (s) => s.points ?? "Unknown"],
+    ["Straight-line miles", (s) => s.distance_miles?.toFixed(2) ?? "Unknown"],
+    ["Network", networkName],
+    ["Access", (s) => s.access || "Unknown"],
+    ["Pricing text", (s) => s.pricing || "Price not provided"],
+    [
+      "Physical compatibility",
+      (s) => compatibilityLabel(compatibility(vehicle(), s).physical),
+    ],
+    ["Last verified", (s) => dateLabel(s.verified)],
+  ]) {
+    const row = el("tr");
+    row.append(el("th", label));
+    state.comparison.forEach((s) => row.append(el("td", value(s))));
+    table.append(row);
+  }
+  wrap.append(table);
+  body.append(
+    wrap,
+    el(
+      "div",
+      "Reported operational status is not live occupancy. Prices and accessibility require confirmation. Demo locations are fictional.",
+      "notice",
+    ),
+  );
+  if (state.comparison.length >= 2)
+    body.append(
+      button(
+        "Compare charging time & cost",
+        () => openEstimator(state.comparison[0], state.comparison[1]),
+        "primary",
+        "bolt",
+      ),
+    );
+}
+$("#compare-open").onclick = openComparison;
+$("#compare-clear").onclick = () => {
+  state.comparison = [];
+  render();
+};
+const networkLinks = {
+  "Tesla Supercharger": "https://www.tesla.com/supercharger",
+  "Tesla Destination": "https://www.tesla.com/destination-charging",
+  "Electrify America": "https://www.electrifyamerica.com/",
+  EVgo: "https://www.evgo.com/",
+  ChargePoint: "https://www.chargepoint.com/",
+};
+function openNetworks() {
+  const body = openModal("Networks, without the guesswork");
+  body.append(
+    el(
+      "p",
+      "Operators are not connector standards. Public access, payment methods and vehicle authorization can vary by site. Neutral labels only; Current is not affiliated with these networks.",
+    ),
+  );
+  const chips = el("div", null, "network-chips"),
+    grid = el("div", null, "network-grid");
+  const networks = [...new Set(state.stations.map(networkName))];
+  for (const name of networks) {
+    const stations = state.stations.filter((s) => networkName(s) === name),
+      matches = state.filtered.filter((s) => networkName(s) === name).length;
+    chips.append(
+      button(
+        `${name.replace("Fictional ", "Demo ")} · ${matches}`,
+        () => {
+          $("#network").value = name;
+          clearDetail();
+          closeModal();
+        },
+        "chip",
+      ),
+    );
+    const card = el("div", null, "network-card");
+    card.append(
+      el("h3", name),
+      el("p", `${matches} matching of ${stations.length} retrieved stations`),
+      el(
+        "p",
+        `Connectors: ${[...new Set(stations.flatMap((s) => s.connectors))].join(", ") || "Unknown"}`,
+      ),
+      el(
+        "p",
+        "Access and payment requirements: see individual source records.",
+      ),
+    );
+    const label = el("label"),
+      check = el("input");
+    check.type = "checkbox";
+    check.checked = state.preferred.includes(name);
+    check.onchange = () => {
+      state.preferred = check.checked
+        ? [...new Set([...state.preferred, name])]
+        : state.preferred.filter((n) => n !== name);
+      save("networks", state.preferred);
+      render();
+    };
+    label.append(check, document.createTextNode("Preferred network"));
+    card.append(label);
+    if (networkLinks[name])
+      card.append(link("Official network information", networkLinks[name]));
+    grid.append(card);
+  }
+  body.append(chips, grid);
+}
+$("#networks-open").onclick = openNetworks;
+function parseCoordinate(value) {
+  const parts = value.split(",").map((x) => Number(x.trim()));
+  if (
+    parts.length !== 2 ||
+    !parts.every(Number.isFinite) ||
+    Math.abs(parts[0]) > 90 ||
+    Math.abs(parts[1]) > 180
+  )
+    throw Error("Use latitude, longitude coordinates for both locations.");
+  return parts;
+}
+function drawRoute() {
+  if (!map?.isStyleLoaded() || !state.route?.geometry) return;
+  const data = {
+    type: "Feature",
+    properties: {},
+    geometry: state.route.geometry,
+  };
+  if (map.getSource("trip-route")) map.getSource("trip-route").setData(data);
+  else {
+    map.addSource("trip-route", { type: "geojson", data });
+    map.addLayer({
+      id: "trip-route-line",
+      type: "line",
+      source: "trip-route",
+      layout: { "line-join": "round", "line-cap": "round" },
+      paint: { "line-color": "#3c7c54", "line-width": 5, "line-opacity": 0.85 },
+    });
+  }
+}
+function openTrip() {
+  const body = openModal("Make the journey part of the plan.");
+  body.append(
+    el(
+      "p",
+      "Coordinate-based driving routes with explicit range assumptions. Navigation and routing providers receive the locations you submit.",
+    ),
+  );
+  if (!config.routing || config.mode === "static")
+    body.append(
+      el(
+        "div",
+        "Driving routes are disabled: no routing provider is configured for this deployment. Set ROUTING_BASE_URL on the backend. Manual saved stops remain available; no fictional route, detour or range prediction is generated.",
+        "notice warning",
+      ),
+    );
+  const form = el("form"),
+    grid = el("div", null, "form-grid");
+  inputField(
+    grid,
+    "Origin · latitude, longitude",
+    "origin",
+    "40.758, -73.9855",
+    "text",
+    { required: true },
+  );
+  inputField(
+    grid,
+    "Destination · latitude, longitude",
+    "destination",
+    "",
+    "text",
+    { required: true, placeholder: "e.g. 41.3083, -72.9279" },
+  );
+  inputField(grid, "Assumed full-charge range (mi)", "range", 250, "number", {
+    min: 1,
+    max: 1000,
+    required: true,
+  });
+  inputField(grid, "Starting battery (%)", "start", 80, "number", {
+    min: 1,
+    max: 100,
+    required: true,
+  });
+  inputField(grid, "Minimum arrival reserve (%)", "reserve", 15, "number", {
+    min: 0,
+    max: 90,
+    required: true,
+  });
+  inputField(grid, "Station corridor width (mi)", "corridor", 5, "number", {
+    min: 1,
+    max: 25,
+    required: true,
+  });
+  form.append(grid);
+  const actions = el("div", null, "form-actions"),
+    submit = el("button", "Plan driving route", "primary");
+  submit.type = "submit";
+  submit.disabled = !config.routing || config.mode === "static";
+  actions.append(submit);
+  form.append(actions);
+  body.append(form);
+  const result = el("div");
+  body.append(result);
+  const renderTimeline = () => {
+    result.replaceChildren();
+    if (state.route) {
+      const route = state.route;
+      result.append(
+        el(
+          "div",
+          `${route.distance_miles.toFixed(1)} driving miles · ${Math.round(route.duration_minutes)} minutes without live traffic. Sampled corridor search is not exhaustive.`,
+          "notice",
+        ),
+      );
+      result.append(
+        el(
+          "p",
+          route.stop_plan?.reason || "Check every leg against your reserve.",
+          "assumptions",
+        ),
+      );
+      const alternatives = route.alternatives;
+      if (alternatives?.fast?.length)
+        result.append(
+          el(
+            "p",
+            `Lower-detour candidates: ${alternatives.fast.map((id) => stationName(route.stations.find((s) => s.id === id) || { name: String(id) })).join(", ")}. Ranked by reported driving detour, not guaranteed fastest total trip.`,
+            "assumptions",
+          ),
+        );
+      if (!alternatives?.cheap?.length)
+        result.append(
+          el(
+            "p",
+            "Lower-cost ranking unavailable until you supply comparable numeric session-cost assumptions. Ambiguous pricing text is not used.",
+            "assumptions",
+          ),
+        );
+      for (const s of route.stations || []) {
+        const row = el("div", null, "info-row");
+        row.append(
+          el("span", stationName(s)),
+          el(
+            "small",
+            `${s.route?.detour_miles?.toFixed(1) ?? "—"} mi / ${Math.round(s.route?.detour_minutes ?? 0)} min driving detour`,
+          ),
+          button(
+            "Add stop",
+            () => {
+              if (!state.tripStops.some((x) => x.id === s.id))
+                state.tripStops.push(s);
+              renderTimeline();
+            },
+            "text-button",
+          ),
+        );
+        result.append(row);
+      }
+    }
+    const timeline = el("div", null, "trip-timeline");
+    if (!state.tripStops.length)
+      timeline.append(
+        el(
+          "p",
+          "No stops yet. Add a real station from its details.",
+          "assumptions",
+        ),
+      );
+    state.tripStops.forEach((s, i) => {
+      const stop = el("div", null, "trip-stop");
+      stop.append(
+        el("strong", `${i + 1}. ${stationName(s)}`),
+        el(
+          "p",
+          s.route
+            ? `Driving detour: ${s.route.detour_miles.toFixed(1)} mi · ${Math.round(s.route.detour_minutes)} min. Charging duration requires vehicle assumptions.`
+            : "Manual stop. Driving leg and arrival state of charge not computed.",
+        ),
+      );
+      const origin =
+        i > 0
+          ? `&origin=${state.tripStops[i - 1].latitude},${state.tripStops[i - 1].longitude}`
+          : "";
+      stop.append(
+        link(
+          "Navigate this leg",
+          `https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}${origin}`,
+        ),
+        button("Estimate charging", () => openEstimator(s), "text-button"),
+        button(
+          "Remove",
+          () => {
+            state.tripStops.splice(i, 1);
+            renderTimeline();
+          },
+          "text-button",
+        ),
+      );
+      timeline.append(stop);
+    });
+    result.append(el("h3", "Your stop timeline"), timeline);
+  };
+  renderTimeline();
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const values = Object.fromEntries(new FormData(form));
+    submit.disabled = true;
+    try {
+      const range = Number(values.range),
+        start = Number(values.start),
+        reserve = Number(values.reserve);
+      if (reserve >= start)
+        throw Error("Starting battery percentage must exceed arrival reserve.");
+      state.route = await api("api/route", {
+        origin: parseCoordinate(values.origin),
+        destination: parseCoordinate(values.destination),
+        range_miles: (range * start) / 100,
+        reserve_miles: (range * reserve) / 100,
+        corridor_miles: Number(values.corridor),
+        include_stations: true,
+        demo: false,
+        vehicle: vehicle() || {},
+      });
+      state.stations = state.route.stations;
+      updateNetworkOptions();
+      render();
+      drawRoute();
+      renderTimeline();
+      toast("Route ready. Review assumptions and sampled station coverage.");
+    } catch (error) {
+      result.prepend(el("div", error.message, "notice warning"));
+    } finally {
+      submit.disabled = false;
+    }
+  };
+}
+$("#trip-nav").onclick = openTrip;
+function exportCSV() {
+  const columns = [
+    "id",
+    "name",
+    "network",
+    "latitude",
+    "longitude",
+    "distance_miles",
+    "max_power_kw",
+    "points",
+    "status",
+    "access",
+    "pricing",
+    "verified",
+    "fictional",
+  ];
+  const escape = (value) => {
+    let text = String(value ?? "");
+    if (/^[=+\-@\t\r]/.test(text)) text = "'" + text;
+    return '"' + text.replaceAll('"', '""') + '"';
+  };
+  const content = [
+    columns.join(","),
+    ...state.filtered.map((s) =>
+      columns.map((key) => escape(s[key])).join(","),
+    ),
+  ].join("\r\n");
+  const a = el("a");
+  a.href = URL.createObjectURL(
+    new Blob([content], { type: "text/csv;charset=utf-8" }),
+  );
+  a.download = "current-stations.csv";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function openTools() {
+  const body = openModal("Make it yours."),
+    grid = el("div", null, "tool-grid");
+  grid.append(
+    button("Export filtered results to CSV", exportCSV, "secondary", "list"),
+    button(
+      "Save this search",
+      () => {
+        state.searches = [
+          { ...searchValues(), saved_at: new Date().toISOString() },
+          ...state.searches,
+        ].slice(0, 10);
+        save("searches", state.searches);
+        openTools();
+        toast("Search saved locally.");
+      },
+      "secondary",
+      "bookmark",
+    ),
+    button(
+      "Share filter settings",
+      () => {
+        const url = new URL(location.pathname, location.origin);
+        for (const key of ["connector", "network"])
+          if ($("#" + key).value) url.searchParams.set(key, $("#" + key).value);
+        if ($("#power").getAttribute("aria-pressed") === "true")
+          url.searchParams.set("power", "150");
+        if ($("#operational").getAttribute("aria-pressed") === "true")
+          url.searchParams.set("operational", "1");
+        shareURL(url.href);
+      },
+      "secondary",
+      "external",
+    ),
+    button(
+      "Charging time & cost calculator",
+      () => openEstimator(),
+      "secondary",
+      "bolt",
+    ),
+  );
+  body.append(grid);
+  for (const [label, key, current] of [
+    [
+      "Outdoor readability / reduced transparency",
+      "outdoor",
+      document.documentElement.classList.contains("outdoor"),
+    ],
+    ["Animate explicit station fly-to", "fly", state.fly],
+  ]) {
+    const row = el("label", null, "check-row"),
+      input = el("input");
+    input.type = "checkbox";
+    input.checked = current;
+    input.onchange = () => {
+      save(key, input.checked);
+      if (key === "outdoor")
+        document.documentElement.classList.toggle("outdoor", input.checked);
+      else state.fly = input.checked;
+    };
+    row.append(input, document.createTextNode(label));
+    body.append(row);
+  }
+  body.append(el("h3", "Saved searches"));
+  if (!state.searches.length)
+    body.append(
+      el("p", "Your saved searches stay on this device.", "assumptions"),
+    );
+  state.searches.forEach((s, i) => {
+    const row = el("div", null, "saved-search");
+    row.append(
+      el(
+        "span",
+        `${s.location_mode === "zip" ? s.zip_code : `${s.latitude}, ${s.longitude}`} · ${s.radius} mi ${s.demo ? "· demo" : ""}`,
+      ),
+      button(
+        "Search",
+        () => {
+          for (const [key, value] of Object.entries(s)) {
+            const field = $(`[name="${key}"]`);
+            if (field && field.type !== "checkbox") field.value = value;
+          }
+          updateMode();
+          $("[name=demo]").checked = config.mode === "static" ? true : s.demo;
+          closeModal();
+          search();
+        },
+        "text-button",
+      ),
+      button(
+        "Remove",
+        () => {
+          state.searches.splice(i, 1);
+          save("searches", state.searches);
+          openTools();
+        },
+        "text-button",
+      ),
+    );
+    body.append(row);
+  });
+  body.append(el("h3", "Recently viewed"));
+  for (const s of state.recent.slice(0, 6))
+    body.append(
+      button(
+        stationName(s),
+        () => {
+          closeModal();
+          showDetail(s);
+        },
+        "text-button",
+      ),
+    );
+  body.append(
+    el(
+      "div",
+      `Local data is not live. ${state.retrieved ? `Station retrieval: ${new Date(state.retrieved).toLocaleString()}. ` : ""}${shellCache ? `Interface cached: ${new Date(shellCache).toLocaleString()}. ` : ""}Offline use requires a previous successful visit. Basemap tiles are not cached. No accounts or cross-device syncing.`,
+      "notice",
+    ),
+  );
+  if (config.mode !== "static")
+    body.append(
+      link("Explore the FastAPI documentation", "./docs", "secondary"),
+    );
+}
+$("#more-actions").onclick = openTools;
+$("#data-info").onclick = () => {
+  const body = openModal("Designed around honest data.");
+  body.append(
+    el(
+      "div",
+      "This demo contains fictional stations, fictional networks and illustrative specifications. None are real destinations. Do not use them for navigation.",
+      "notice warning",
+    ),
+    el(
+      "p",
+      "Live station search, when configured, is provided by Open Charge Map. Operational status is reported, not live occupancy. Distances are straight-line miles unless explicitly labeled driving distance. Missing access, pricing, vehicle or amenity information stays unknown.",
+    ),
+    link("Open Charge Map data and terms", "https://openchargemap.org"),
+    el(
+      "p",
+      "Map data: OpenStreetMap contributors / OpenFreeMap. See visible map attribution. Connector illustrations are original and educational, not engineering drawings.",
+    ),
+  );
+};
+window.addEventListener("offline", () => {
+  $("#message").textContent =
+    "Offline · showing retained station snapshots, not live data. Maps may be unavailable.";
+});
+async function initialize() {
+  updateNetworkOptions();
+  const params = new URLSearchParams(location.search);
+  for (const key of ["connector", "network"])
+    if (params.has(key)) $("#" + key).value = params.get(key);
+  if (params.get("power") === "150")
+    $("#power").setAttribute("aria-pressed", "true");
+  if (params.get("operational") === "1")
+    $("#operational").setAttribute("aria-pressed", "true");
+  if (!navigator.onLine) {
+    const cached = load("last-results", null);
+    if (cached) {
+      state.stations = cached.stations;
+      state.center = cached.center;
+      state.retrieved = cached.retrieved_at;
+      state.demo = cached.demo;
+      state.radius = cached.radius;
+      $("#message").textContent =
+        `Offline snapshot retrieved ${new Date(cached.retrieved_at).toLocaleString()}. Not live.`;
+    }
+  }
+  render();
+  initMap();
+  if (load("list", false)) setListMode(true);
+  if (boot.error) {
+    $("#message").textContent = boot.error;
+    $("#message").classList.add("error");
+  }
+  const stationId = params.get("station");
+  if (stationId) {
+    let station = state.stations.find((s) => String(s.id) === stationId);
+    if (!station && config.mode !== "static") {
+      try {
+        station = (await api(`api/station/${encodeURIComponent(stationId)}`))
+          .station;
+        state.stations.push(station);
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+    if (station) showDetail(station);
+    else toast("That station is unavailable in this demo.");
+  }
+  if ("serviceWorker" in navigator) {
+    try {
+      const registration = await navigator.serviceWorker.register(
+        new URL("./sw.js", document.baseURI),
+        { scope: "./" },
+      );
+      navigator.serviceWorker.addEventListener("message", (e) => {
+        if (e.data?.type === "EV_CACHE_STATUS") shellCache = e.data.cached_at;
+      });
+      (registration.active || registration.waiting)?.postMessage({
+        type: "CACHE_STATUS",
+      });
+    } catch {
+      /* Offline support is optional; search remains functional. */
+    }
+  }
 }
 initialize();

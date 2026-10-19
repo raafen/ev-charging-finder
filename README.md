@@ -7,6 +7,12 @@ A calm, map-first charging companion built with Flask, a FastAPI documentation g
 **ReDoc:** https://ev-charging-finder-nine.vercel.app/redoc  
 **GitHub Pages fictional demo:** https://raafen.github.io/ev-charging-finder/
 
+![Current desktop workspace with fictional Manhattan charging stations](docs/media/desktop.png)
+
+[Mobile screenshot](docs/media/mobile.png) · [Short production demo video](docs/media/demo.webm)
+
+Captured from the deployed application. The video demonstrates filtering, station details, the connector lab and theme switching; all shown stations are fictional.
+
 ## Run locally
 
 Python 3.12–3.14:
