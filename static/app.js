@@ -132,11 +132,13 @@ function openModal(title) {
   modalEpoch++;
   $("#modal-title").textContent = title;
   setNavigation(
-    title === "Plan a trip"
+    title === "Trips"
       ? "trip-nav"
-      : title === "Connectors"
-        ? "learn-nav"
-        : "explore-nav",
+      : title === "Drive Mode"
+        ? "drive-nav"
+        : title === "Connectors"
+          ? "explore-nav"
+          : "explore-nav",
   );
   $("#modal").scrollTop = 0;
   $("#modal-body").replaceChildren();
@@ -1289,7 +1291,7 @@ async function openExplorer() {
       );
   }
 }
-$("#learn-nav").onclick = openExplorer;
+$("#learn-nav")?.addEventListener("click", openExplorer);
 $("#learn-card").onclick = openExplorer;
 $("#garage-nav").onclick = openGarage;
 $("#explore-nav").onclick = () => {
@@ -1935,7 +1937,7 @@ function drawRoute() {
   }
 }
 function openTrip() {
-  const body = openModal("Plan a trip");
+  const body = openModal("Trips");
   body.append(
     el(
       "p",
@@ -2187,6 +2189,35 @@ function openTrip() {
   };
 }
 $("#trip-nav").onclick = openTrip;
+function openDriveMode() {
+  const body = openModal("Drive Mode");
+  body.append(el("p", "A passenger-focused trip companion. Keep turn-by-turn navigation and all driving interaction in your vehicle’s navigation system.", "notice"));
+  if (!state.route) {
+    body.append(el("p", "Plan a route first to see its journey overview."));
+    body.append(button("Plan a trip", openTrip, "primary"));
+    return;
+  }
+  const route = state.route;
+  body.append(
+    el("h3", "Journey overview"),
+    el("p", `${route.distance_miles.toFixed(1)} mi · ${Math.round(route.duration_minutes)} min driving, excluding traffic and stops.`),
+    el("p", "Vehicle battery, live location, weather, traffic, and live charger availability are not connected."),
+  );
+  const timeline = el("div", null, "trip-timeline");
+  timeline.append(el("div", null, "trip-stop"));
+  timeline.firstElementChild.append(el("strong", "Departure"), el("p", "Starting location from your planned route. Live vehicle location unavailable."));
+  state.tripStops.forEach((station, index) => {
+    const stop = el("div", null, "trip-stop");
+    stop.append(el("strong", `${index + 1}. ${stationName(station)}`));
+    stop.append(el("p", station.route ? `${station.route.from_origin_miles.toFixed(1)} driving miles from origin · reported station data, not live occupancy.` : "Manually added stop; driving leg and arrival battery are not calculated."));
+    timeline.append(stop);
+  });
+  const destination = el("div", null, "trip-stop");
+  destination.append(el("strong", "Destination"), el("p", `${route.distance_miles.toFixed(1)} driving miles · arrival battery estimate unavailable without live vehicle data.`));
+  timeline.append(destination);
+  body.append(timeline);
+}
+$("#drive-nav").onclick = openDriveMode;
 function exportCSV() {
   const columns = [
     "id",

@@ -21,7 +21,7 @@ Current uses a neutral, map-first interface rather than a dashboard or landing p
 - One primary ZIP search, a visible **Use my location** action and an always-accessible radius control. There is no manual latitude/longitude entry; connector/network/compatibility controls sit under **Filters**.
 - Directly selectable station rows, separated by dividers. Power, connector, distance and reported status have a consistent hierarchy; saving and comparison remain independent actions.
 - Mobile search stays accessible above the map. The station sheet has a keyboard/touch expansion control, integrated list switching and safe-area-aware navigation. Selected pins are kept clear of the sheet.
-- Garage, charging estimates, network/station comparisons, trip planning and the connector guide share form, typography and control conventions. Source/freshness detail expands without hiding essential availability warnings.
+- Garage, charging estimates, network/station comparisons, trip planning and the passenger-focused Drive Mode share form, typography and control conventions. Drive Mode is a trip overview for passengers; in-car navigation remains the source for turn-by-turn guidance.
 - Garage manufacturer entry offers searchable native dropdown suggestions for common EV brands, while accepting custom manufacturers and preserving saved-profile editing. Suggestions do not supply or verify charging specifications.
 - `static/app.css` centralizes color, geometry, spacing and motion tokens. `static/ui.js` supplies shared semantic DOM, form and action primitives. No new UI framework or runtime dependency was added.
 

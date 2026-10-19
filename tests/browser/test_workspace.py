@@ -302,6 +302,16 @@ class WorkspaceTests(unittest.TestCase):
                 expect(page.locator("#results .station-card")).to_have_count(1)
                 expect(page.locator('[data-station="901001"]')).to_contain_text("Test Riverside Charging")
 
+
+    def test_drive_mode_stays_passenger_focused_without_vehicle_telemetry(self):
+        page, _, _, _ = self.open_workspace("flask")
+        page.locator("#drive-nav").click()
+        expect(page.locator("#modal-title")).to_have_text("Drive Mode")
+        expect(page.locator("#modal-body")).to_contain_text("Keep turn-by-turn navigation")
+        expect(page.locator("#modal-body")).to_contain_text("Plan a route first")
+        page.get_by_role("button", name="Plan a trip").click()
+        expect(page.locator("#modal-title")).to_have_text("Trips")
+        expect(page.locator("#routing-unavailable")).to_be_visible()
     def test_retired_sample_data_is_removed_without_losing_real_saved_stations(self):
         for mode in self.urls:
             with self.subTest(mode=mode):
