@@ -16,19 +16,22 @@ class FinderTests(unittest.TestCase):
     def test_distance(self):
         self.assertAlmostEqual(distance_km(0, 0, 0, 1), 111.195, places=2)
 
-    def test_demo_sort_and_filter(self):
-        stations = search(40.758, -73.9855, demo=True)
-        self.assertEqual(len(stations), 8)
-        self.assertEqual([s["distance_miles"] for s in stations], sorted(s["distance_miles"] for s in stations))
-        self.assertEqual(len({s["id"] for s in stations}), 8)
-        self.assertTrue(all(s["fictional"] for s in stations))
-        self.assertEqual(len(search(40.758, -73.9855, demo=True, operational_only=True)), 6)
-        self.assertEqual(search(0, 0, demo=True), [])
+    @patch("finder.OpenChargeMapProvider")
+    def test_upstream_sort_and_filter(self, factory):
+        factory.return_value.search.return_value = [
+            {"ID": 2, "AddressInfo": {"Title": "Test record", "Latitude": 0, "Longitude": .02}, "StatusType": {"IsOperational": False}},
+            {"ID": 1, "AddressInfo": {"Title": "Test record", "Latitude": 0, "Longitude": .01}, "StatusType": {"IsOperational": True}},
+        ]
+        stations = search(0, 0)
+        self.assertEqual([s["id"] for s in stations], [1, 2])
+        self.assertEqual([s["name"] for s in stations], ["Test record", "Test record"])
+        self.assertEqual([s["id"] for s in search(0, 0, operational_only=True)], [1])
+        self.assertNotIn("fictional", stations[0])
 
     def test_validation(self):
         for lat, lon, radius, limit in [(91,0,10,20),(0,181,10,20),(float('nan'),0,10,20),(0,0,0,20),(0,0,10,101)]:
             with self.assertRaises(ValueError):
-                search(lat, lon, radius, limit, demo=True)
+                search(lat, lon, radius, limit)
 
     @patch.dict('os.environ', {'OCM_API_KEY': 'test-key'})
     @patch('finder.requests.get')
@@ -73,21 +76,41 @@ class FinderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             lookup_zip('1234')
 
-    def test_web_zip_demo(self):
+    @patch("app.search")
+    @patch("app.lookup_zip")
+    def test_web_zip_results_and_error(self, lookup, search_mock):
+        lookup.return_value = (42.06, -72.61, "01001 — Agawam, MA")
+        search_mock.return_value = []
         client = app.test_client()
-        response = client.post('/', data={'location_mode':'zip','zip_code':'10036','radius':'10','limit':'20','demo':'on'})
-        self.assertIn(b'Demo Central Garage', response.data)
-        self.assertIn(b'miles', response.data)
-        response = client.post('/', data={'location_mode':'zip','zip_code':'abc','radius':'10','limit':'20','demo':'on'})
+        response = client.post('/', data={'zip_code':'01001','radius':'10','limit':'100'})
+        self.assertEqual(response.status_code, 200)
+        search_mock.assert_called_once_with(42.06, -72.61, 10, 100, operational_only=False)
+        lookup.side_effect = ValueError("Enter a five-digit US ZIP code.")
+        response = client.post('/', data={'zip_code':'abc'})
+        self.assertEqual(response.status_code, 400)
         self.assertIn(b'five-digit US ZIP', response.data)
 
-    def test_web_demo_and_bad_input(self):
-        client = app.test_client()
-        self.assertEqual(client.get('/').status_code, 200)
-        response = client.post('/', data={'latitude':'40.758','longitude':'-73.9855','radius':'10','limit':'20','demo':'on'})
-        self.assertIn(b'Demo Central Garage', response.data)
-        response = client.post('/', data={'latitude':'91','longitude':'0','radius':'10','limit':'20','demo':'on'})
-        self.assertIn(b'Latitude must be', response.data)
+    @patch("app.lookup_zip")
+    @patch("app.search")
+    @patch("app.render_template", return_value="empty")
+    def test_initial_page_has_no_network_or_results(self, render, search_mock, lookup):
+        self.assertEqual(app.test_client().get('/').status_code, 200)
+        search_mock.assert_not_called()
+        lookup.assert_not_called()
+        self.assertEqual(render.call_args.kwargs["initial_data"]["stations"], [])
+        self.assertIsNone(render.call_args.kwargs["initial_data"]["error"])
+        self.assertEqual(render.call_args.kwargs["values"], {"zip_code": "", "radius": "10", "limit": "100"})
+
+    @patch("app.render_template", return_value="results")
+    @patch("app.lookup_zip", return_value=(42.06, -72.61, "01001 — Agawam, MA"))
+    @patch("app.search", return_value=[])
+    def test_html_post_boot_retains_resolved_location(self, search_mock, lookup, render):
+        response = app.test_client().post("/", data={"zip_code": "01001"})
+        self.assertEqual(response.status_code, 200)
+        boot = render.call_args.kwargs["initial_data"]
+        self.assertEqual(boot["center"], [42.06, -72.61])
+        self.assertEqual(boot["location"], "01001 — Agawam, MA")
+        self.assertTrue(boot["retrieved_at"])
 
 if __name__ == '__main__':
     unittest.main()

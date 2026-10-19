@@ -1,8 +1,10 @@
-"""Export the fictional demo without credentials or a running Flask service."""
+"""Export a credential-free shell that searches the live backend."""
 import argparse
 import hashlib
 import json
 from pathlib import Path
+import os
+from urllib.parse import urlsplit, urlunsplit
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -12,27 +14,49 @@ sys.path.insert(0, str(ROOT))
 
 from flask import render_template
 from app import app
-from finder import search
 
 
 ASSET_SUFFIXES = {".css", ".js", ".json", ".svg", ".webmanifest", ".png", ".jpg", ".webp", ".woff2"}
+DEFAULT_API_BASE = "https://ev-charging-finder-nine.vercel.app/"
+SHELL_VERSION = "current-shell-v2"
+
+
+def api_base_url(value):
+    """Accept public HTTPS backends and loopback HTTP for local integration."""
+    parsed = urlsplit(value)
+    try:
+        parsed.port
+    except ValueError as error:
+        raise ValueError("API_BASE_URL must use a valid port.") from error
+    local = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+    if (
+        not parsed.hostname
+        or (parsed.scheme != "https" and not (parsed.scheme == "http" and local))
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or any(character.isspace() for character in value)
+    ):
+        raise ValueError("API_BASE_URL must be public HTTPS or loopback HTTP, without credentials, query or fragment.")
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/") + "/", "", ""))
 
 
 def build(destination):
+    api_base = api_base_url(os.environ.get("API_BASE_URL", DEFAULT_API_BASE))
     destination = Path(destination).resolve()
     if destination == ROOT or ROOT.is_relative_to(destination):
         raise ValueError("Choose an output directory below or outside the source directory.")
     if destination.exists() and any(destination.iterdir()):
         raise ValueError("Output directory must be empty; use a new directory to avoid publishing stale files.")
     destination.mkdir(parents=True, exist_ok=True)
-    stations = search(40.758, -73.9855, radius=10, limit=100, demo=True)
-    config = {"mode": "static", "live_search": False, "routing": False}
-    initial_data = {"stations": stations, "demo": True, "config": config, "error": None}
-    values = {"latitude": "40.758", "longitude": "-73.9855", "radius": "10", "limit": "100", "zip_code": "10036", "location_mode": "zip"}
+    config = {"mode": "static", "api_base": api_base, "live_search": True, "routing": False}
+    initial_data = {"stations": [], "config": config, "error": None}
+    values = {"zip_code": "", "radius": "10", "limit": "100"}
     with app.test_request_context("/"):
-        html = render_template("index.html", initial_data=initial_data, stations=stations,
-                               demo=True, config=config, error=None, values=values,
-                               operational=False, location="Midtown Manhattan · fictional demo")
+        html = render_template("index.html", initial_data=initial_data, stations=[],
+                               config=config, error=None, values=values,
+                               operational=False, location="Choose a search area")
     html = html.replace('"/static/', '"./static/').replace("'/static/", "'./static/")
     (destination / "index.html").write_text(html, encoding="utf-8")
     assets = []
@@ -51,15 +75,16 @@ def build(destination):
     for asset in assets:
         digest.update((destination / asset).read_bytes())
     worker = (ROOT / "static/sw.js").read_text(encoding="utf-8")
-    worker = worker.replace("current-shell-v1", "current-shell-" + digest.hexdigest()[:16])
+    worker = worker.replace(SHELL_VERSION, "current-shell-" + digest.hexdigest()[:16])
+    assets = [asset + "?v=3" if asset in ("./static/app.js", "./static/app.css") else asset for asset in assets]
     worker = worker.replace("/* BUILD_ASSETS */", "SHELL_ASSETS = " + json.dumps(["./", *assets]) + ";")
     (destination / "sw.js").write_text(worker, encoding="utf-8")
     (destination / ".nojekyll").write_text("", encoding="utf-8")
     (destination / "build-info.json").write_text(json.dumps({
-        "mode": "static", "demo": True, "built_at": datetime.now(timezone.utc).isoformat(),
+        "mode": "static", "api_base": api_base, "built_at": datetime.now(timezone.utc).isoformat(),
         "shell_version": "current-shell-" + digest.hexdigest()[:16],
     }, indent=2) + "\n", encoding="utf-8")
-    print(f"Exported fictional demo to {destination}")
+    print(f"Exported live API frontend to {destination}")
 
 
 if __name__ == "__main__":

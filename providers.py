@@ -87,7 +87,7 @@ class OpenChargeMapProvider:
     def __init__(self, api_key=None):
         self.key = api_key if api_key is not None else os.environ.get("OCM_API_KEY", "").strip()
         if not self.key:
-            raise FinderError("Live search is not configured. Set OCM_API_KEY on the server or select fictional demo mode.", 503)
+            raise FinderError("Live search is not configured. Set OCM_API_KEY on the server.", 503)
 
     def _fetch(self, params):
         params = {"output": "json", "compact": "false", "verbose": "true", "client": "ev-charging-finder", **params}

@@ -1,7 +1,5 @@
 """Station discovery, normalized public data and provider-backed route planning."""
-import json
 import math
-from pathlib import Path
 import re
 import requests  # Kept as the shared HTTP module for CLI consumers and patchable transports.
 from domain import connector_name, finite_number
@@ -114,14 +112,10 @@ def normalize(records, latitude, longitude, radius, limit, operational_only, ref
             "payments": {"pay_at_location": usage.get("IsPayAtLocation") if isinstance(usage.get("IsPayAtLocation"), bool) else None, "access_key_required": usage.get("IsAccessKeyRequired") if isinstance(usage.get("IsAccessKeyRequired"), bool) else None},
             "hours": _text(record.get("OpeningTimes")), "access_comments": _text(address.get("AccessComments")),
             "provider": _text(provider.get("Title"), "Unknown provider"), "license": _text(provider.get("License"), "See source record for licensing"),
-            "source_url": f"https://openchargemap.org/site/poi/details/{station_id}" if station_id is not None else "https://openchargemap.org", "fictional": False,
+            "source_url": f"https://openchargemap.org/site/poi/details/{station_id}" if station_id is not None else "https://openchargemap.org",
             "availability": "unknown", "availability_note": "Operational status is not real-time stall availability."})
     return sorted(stations, key=lambda station: station["distance_miles"])[:limit]
 
-
-def demo_stations():
-    with (Path(__file__).parent / "static" / "demo.json").open(encoding="utf-8") as handle:
-        return json.load(handle)
 
 
 def _needed_references(records, provider):
@@ -141,28 +135,16 @@ def _needed_references(records, provider):
     return {}
 
 
-def search(latitude, longitude, radius=10, limit=20, operational_only=False, demo=False):
+def search(latitude, longitude, radius=10, limit=100, operational_only=False):
     validate(latitude, longitude, radius, limit)
-    if demo:
-        stations = []
-        for station in demo_stations():
-            distance = distance_km(latitude, longitude, station["latitude"], station["longitude"]) / 1.609344
-            if distance <= radius and (not operational_only or station["operational"] is True):
-                stations.append({**station, "distance_miles": distance})
-        return sorted(stations, key=lambda s: s["distance_miles"])[:limit]
     provider = OpenChargeMapProvider()
     records = provider.search(latitude, longitude, radius)
     return normalize(records, latitude, longitude, radius, limit, operational_only, _needed_references(records, provider))
 
 
 def get_station(station_id):
-    if station_id.startswith("demo-"):
-        station = next((s for s in demo_stations() if s["id"] == station_id), None)
-        if station is None:
-            raise FinderError("Fictional demo station not found.", 404)
-        return station
     if not re.fullmatch(r"[1-9][0-9]{0,11}", station_id):
-        raise ValueError("Station ID must be a positive Open Charge Map ID or demo-1 through demo-8.")
+        raise ValueError("Station ID must be a positive Open Charge Map numeric ID.")
     provider = OpenChargeMapProvider()
     record = provider.station(int(station_id))
     address = _object(record.get("AddressInfo"))
@@ -175,14 +157,10 @@ def get_station(station_id):
     return stations[0]
 
 
-def lookup_zip(zip_code, demo=False):
+def lookup_zip(zip_code):
     zip_code = zip_code.strip()
     if not re.fullmatch(r"[0-9]{5}", zip_code):
         raise ValueError("Enter a five-digit US ZIP code, such as 10036.")
-    if demo:
-        if zip_code != "10036":
-            raise ValueError("Offline ZIP demo supports 10036 only. Use coordinates or disable demo.")
-        return 40.758, -73.9855, "10036 (fictional demo near Times Square)"
     cached = zip_cache.get(zip_code)
     if cached is not None:
         return tuple(cached)
@@ -224,7 +202,15 @@ def _corridor_distance(point, geometry):
 
 
 def route_search(data, provider=None):
-    origin, destination = coordinate(data.get("origin"), "origin"), coordinate(data.get("destination"), "destination")
+    if "demo" in data:
+        raise ValueError("Demo requests are no longer supported. Search for real locations.")
+    if "origin_zip" in data or "destination_zip" in data:
+        if "origin" in data or "destination" in data:
+            raise ValueError("Use ZIP codes or internal coordinates, not both.")
+        origin = list(lookup_zip(str(data.get("origin_zip", "")))[:2])
+        destination = list(lookup_zip(str(data.get("destination_zip", "")))[:2])
+    else:
+        origin, destination = coordinate(data.get("origin"), "origin"), coordinate(data.get("destination"), "destination")
     corridor = finite_number(data.get("corridor_miles", 3), "corridor_miles", minimum=0.1, maximum=25)
     range_miles = None if data.get("range_miles") is None else finite_number(data["range_miles"], "range_miles", minimum=1, maximum=1000)
     reserve = finite_number(data.get("reserve_miles", 20), "reserve_miles", maximum=1000)
@@ -232,7 +218,7 @@ def route_search(data, provider=None):
         raise ValueError("reserve_miles must be smaller than range_miles.")
     provider = provider or OSRMProvider()
     route = provider.route([origin, destination])
-    route.update(origin=origin, destination=destination, stations=[], demo=data.get("demo") is True, corridor_miles=corridor)
+    route.update(origin=origin, destination=destination, stations=[], corridor_miles=corridor)
     if data.get("include_stations", True) is not True:
         route["stop_plan"] = {"status": "not_requested", "reason": "Enable station search for stop planning."}
         return route
@@ -243,7 +229,7 @@ def route_search(data, provider=None):
     candidates = {}
     for index in indices:
         lon, lat = geometry[index][:2]
-        for station in search(lat, lon, corridor, 100, demo=route["demo"]):
+        for station in search(lat, lon, corridor, 100):
             key = station["id"]
             if key is not None and _corridor_distance((station["latitude"], station["longitude"]), geometry) <= corridor:
                 candidates[key] = station

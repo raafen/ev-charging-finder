@@ -13,7 +13,6 @@ import {
   compatibility,
   compatibilityLabel,
   estimate,
-  milesBetween,
 } from "./domain.js";
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -35,19 +34,35 @@ const save = (key, value) => {
     );
   }
 };
+const isSourceStation = (station) =>
+  station && /^[1-9]\d*$/.test(String(station.id));
+const savedZipSearches = load("searches", [])
+  .filter((s) => !s.demo && /^\d{5}$/.test(String(s.zip_code || "")))
+  .map((s) => ({
+    zip_code: s.zip_code,
+    radius: s.radius || 10,
+    saved_at: s.saved_at,
+  }));
 const state = {
-  stations: boot.stations || [],
+  stations: (boot.stations || []).filter(isSourceStation),
   filtered: [],
   selected: null,
-  center: [40.758, -73.9855],
-  radius: 10,
-  demo: boot.demo !== false,
-  retrieved: null,
+  center: boot.center || [39.5, -98.35],
+  radius: Number($("[name=radius]").value),
+  hasSearched: Boolean(boot.center),
+  query: boot.center
+    ? {
+        location_mode: "zip",
+        zip_code: $("#zip").value,
+        radius: Number($("[name=radius]").value),
+      }
+    : null,
+  retrieved: boot.retrieved_at || null,
   vehicles: load("vehicles", []),
   activeVehicle: load("active-vehicle", null),
-  favorites: load("favorites", []),
-  recent: load("recent", []),
-  searches: load("searches", []),
+  favorites: load("favorites", []).filter(isSourceStation),
+  recent: load("recent", []).filter(isSourceStation),
+  searches: savedZipSearches,
   preferred: load("networks", []),
   comparison: [],
   tripStops: [],
@@ -57,6 +72,8 @@ const state = {
 let map,
   markers = [],
   requestNumber = 0,
+  locationAttempt = 0,
+  lastRequest = null,
   controller,
   explorerCleanup,
   modalEpoch = 0,
@@ -88,7 +105,7 @@ function status(s) {
   );
   return n;
 }
-const stationName = (s) => s.name.replace(/\s*[—–]\s*Fictional$/, "");
+const stationName = (s) => s.name;
 const networkName = (s) => s.network || "Network not reported";
 const dateLabel = (value) => {
   if (!value) return "Not provided";
@@ -164,34 +181,23 @@ $("#theme").onclick = () => {
   save("theme", document.documentElement.dataset.theme);
   if (map && !mapFailed) map.setStyle(mapStyle());
 };
-function updateMode() {
-  const zip = $("#location-mode").value === "zip";
-  $("#zip").disabled = !zip;
-  $("#zip").required = zip;
-  $("#coordinate-fields").hidden = zip;
-  for (const key of ["latitude", "longitude"]) {
-    $(`[name=${key}]`).disabled = zip;
-    $(`[name=${key}]`).required = !zip;
-  }
-  $(".search-input").hidden = !zip;
-  if (!zip) $("#search-settings").open = true;
-  updateSearchScope();
-}
-$("#location-mode").onchange = updateMode;
-updateMode();
-function updateSearchScope() {
-  $("#search-scope").textContent =
-    `${$("[name=radius]").value} mi · ${$("[name=demo]").checked ? "Demo" : "Live"}`;
-}
-for (const selector of ["[name=radius]", "[name=demo]"])
-  $(selector).addEventListener("change", updateSearchScope);
-if (config.mode === "static") {
-  $("[name=demo]").disabled = true;
-  $("#connection-mode").textContent = "GitHub Pages · offline demo";
-} else if (!config.live_search)
-  $("#connection-mode").textContent = "Live provider not configured";
-$("[name=demo]").checked = state.demo;
-updateSearchScope();
+save("favorites", state.favorites);
+save("recent", state.recent);
+save("searches", state.searches);
+$("#clear-location").hidden = !$("#zip").value;
+$("#zip").addEventListener("input", () => {
+  $("#clear-location").hidden = !$("#zip").value;
+});
+$("#clear-location").onclick = () => {
+  $("#zip").value = "";
+  $("#clear-location").hidden = true;
+  $("#zip").focus();
+};
+$("[name=radius]").onchange = () => {
+  if (state.query)
+    search({ ...state.query, radius: Number($("[name=radius]").value) });
+  else $("#radius-label").textContent = `${$("[name=radius]").value} mi radius`;
+};
 function filterStations() {
   const power = $("#power").getAttribute("aria-pressed") === "true",
     operational = $("#operational").getAttribute("aria-pressed") === "true",
@@ -273,10 +279,7 @@ function card(s) {
   article.dataset.station = s.id;
   const top = el("div", null, "card-top");
   const heading = el("div", null, "card-title");
-  heading.append(
-    el("h3", stationName(s)),
-    el("p", networkName(s).replace("Fictional ", "Demo · ")),
-  );
+  heading.append(el("h3", stationName(s)), el("p", networkName(s)));
   top.append(
     heading,
     el(
@@ -333,39 +336,78 @@ function card(s) {
         "assumptions",
       ),
     );
-  if (s.fictional)
-    bottom.insertBefore(el("span", "Demo", "fictional-label"), compare);
   article.append(bottom);
   return article;
 }
 function render() {
   filterStations();
+  const savedOnly = $("#favorites-only").checked;
+  $(".results-toolbar").hidden = !state.hasSearched && !savedOnly;
+  $("#sort").hidden = !state.hasSearched && !savedOnly;
   $("#result-title").textContent =
-    `${state.filtered.length} station${state.filtered.length === 1 ? "" : "s"} nearby`;
-  $("#result-subtitle").textContent =
-    "Straight-line distance · not live occupancy";
+    `${state.filtered.length} ${savedOnly ? "saved " : ""}station${state.filtered.length === 1 ? "" : "s"}${savedOnly ? "" : " nearby"}`;
+  $("#result-subtitle").textContent = savedOnly
+    ? "Saved on this device · not live"
+    : "Straight-line distance · reported status";
   const results = $("#results");
   results.replaceChildren(...state.filtered.map(card));
   if (!state.filtered.length) {
     const empty = el("div", null, "empty-state");
-    empty.append(
-      icon("search"),
-      el("h3", "No matching stations"),
-      el(
-        "p",
-        "No matching stations. Try a wider radius or clear your filters.",
-      ),
-      button("Clear filters", resetFilters, "text-button"),
-    );
+    if (savedOnly) {
+      empty.append(
+        el("h3", "No saved stations"),
+        el(
+          "p",
+          "Tap the heart next to a charging station to save it on this device.",
+        ),
+        button("Explore stations", resetFilters, "text-button"),
+      );
+    } else if (!state.hasSearched) {
+      empty.append(
+        icon("pin"),
+        el("h2", "Where would you like to charge?"),
+        el(
+          "p",
+          "Enter a US ZIP code above, or choose Use my location. Your location is only requested when you ask.",
+        ),
+      );
+    } else {
+      empty.append(
+        el("h3", "No matching stations"),
+        el("p", "Try a wider radius or clear your filters."),
+      );
+      if (!$("#quick-reset").hidden)
+        empty.append(button("Clear filters", resetFilters, "text-button"));
+      else {
+        const radius = [5, 10, 25, 50, 100].find(
+          (value) => value > state.radius,
+        );
+        if (radius && state.query)
+          empty.append(
+            button(
+              `Search within ${radius} miles`,
+              () => {
+                $("[name=radius]").value = String(radius);
+                search({ ...state.query, radius });
+              },
+              "text-button",
+            ),
+          );
+      }
+    }
     results.append(empty);
   }
   $("#comparison-tray").hidden = !state.comparison.length;
   $("#comparison-count").textContent =
     `${state.comparison.length} of 3 stations`;
-  $("#demo-banner").hidden = !state.demo;
   $("#garage-label").textContent = vehicle()
     ? `${vehicle().make} ${vehicle().model}`
     : "My garage";
+  const mapReady = Boolean(map && !mapFailed);
+  $("#pitch").disabled =
+    !mapReady || (!state.hasSearched && !state.filtered.length);
+  $("#recenter").disabled = !mapReady || !state.hasSearched;
+  $("#fit").disabled = !mapReady || !state.filtered.length;
   updateMapData();
 }
 function clearDetail() {
@@ -424,7 +466,10 @@ function updateNetworkOptions() {
   for (const name of [...new Set(state.stations.map(networkName))].sort())
     $("#network").add(new Option(name, name));
   $("#network").value = current;
-  if ($("#network").selectedIndex < 0) $("#network").value = "";
+  if ($("#network").selectedIndex < 0 && current) {
+    $("#network").add(new Option(current, current));
+    $("#network").value = current;
+  }
 }
 function setSheet(expanded) {
   $(".sidebar").classList.toggle("expanded", expanded);
@@ -469,7 +514,7 @@ function initMap() {
       container: "map",
       style: mapStyle(),
       center: [state.center[1], state.center[0]],
-      zoom: 13.2,
+      zoom: state.hasSearched ? 13.2 : 3.4,
       maxZoom: 18,
       pitch: 0,
       attributionControl: { compact: true },
@@ -486,8 +531,9 @@ function initMap() {
     map.on("style.load", () => {
       mapFailed = false;
       $("#map-warning").hidden = true;
-      for (const id of ["pitch", "recenter", "fit"])
-        $("#" + id).disabled = false;
+      $("#pitch").disabled = !state.hasSearched && !state.filtered.length;
+      $("#recenter").disabled = !state.hasSearched;
+      $("#fit").disabled = !state.filtered.length;
       setupMapLayers();
     });
     map.on("dragend", () => ($("#search-area").hidden = false));
@@ -614,6 +660,7 @@ function setupMapLayers() {
   drawRoute();
 }
 function radiusGeoJSON() {
+  if (!state.hasSearched) return { type: "FeatureCollection", features: [] };
   const [lat, lon] = state.center,
     coords = [],
     angular = state.radius / 3958.7613,
@@ -775,83 +822,64 @@ $("#satellite").onclick = () => {
   );
 };
 $("#search-area").onclick = () => {
-  const p = map.getCenter();
-  $("#location-mode").value = "coordinates";
-  updateMode();
-  $("[name=latitude]").value = p.lat.toFixed(5);
-  $("[name=longitude]").value = p.lng.toFixed(5);
-  search();
+  const center = map.getCenter();
+  search({
+    location_mode: "coordinates",
+    latitude: center.lat,
+    longitude: center.lng,
+    label: "This map area",
+  });
 };
 async function api(path, data, signal) {
-  const response = await fetch(new URL(path, document.baseURI), {
-    method: data ? "POST" : "GET",
-    headers: data ? { "Content-Type": "application/json" } : {},
-    body: data ? JSON.stringify(data) : undefined,
-    signal,
-  });
-  const result = await response.json();
+  let response;
+  try {
+    response = await fetch(new URL(path, config.api_base || document.baseURI), {
+      method: data ? "POST" : "GET",
+      headers: data ? { "Content-Type": "application/json" } : {},
+      body: data ? JSON.stringify(data) : undefined,
+      signal,
+      credentials: "omit",
+    });
+  } catch (error) {
+    if (error.name === "AbortError") throw error;
+    throw Error(
+      "Unable to connect to the station service. Check your connection and try again.",
+    );
+  }
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    throw Error(
+      "The station service is temporarily unavailable. Please try again.",
+    );
+  }
   if (!response.ok)
     throw Error(
       result.error ||
         result.detail?.[0]?.msg ||
-        `Request failed (${response.status}). Please try again.`,
+        "Search could not be completed. Please try again.",
     );
   return result;
 }
-async function demoSearch(data) {
-  let center;
-  if (data.location_mode === "zip") {
-    if (!/^\d{5}$/.test(data.zip_code))
-      throw Error("Enter a five-digit US ZIP code.");
-    if (data.zip_code !== "10036")
-      throw Error(
-        "Offline demo supports ZIP 10036 only. Try coordinates or enable live search.",
-      );
-    center = [40.758, -73.9855];
-  } else center = [Number(data.latitude), Number(data.longitude)];
-  const radius = Number(data.radius);
-  if (
-    !center.every(Number.isFinite) ||
-    Math.abs(center[0]) > 90 ||
-    Math.abs(center[1]) > 180 ||
-    !Number.isFinite(radius) ||
-    radius <= 0 ||
-    radius > 100
-  )
-    throw Error("Enter valid coordinates and a radius from 1 to 100 miles.");
-  const response = await fetch(new URL("./demo.json", import.meta.url));
-  if (!response.ok)
-    throw Error(
-      "Offline demo data could not load. Reconnect once to cache the interface.",
-    );
-  const records = await response.json();
-  return {
-    stations: records
-      .map((s) => ({
-        ...s,
-        distance_miles: milesBetween(center, [s.latitude, s.longitude]),
-      }))
-      .filter((s) => s.distance_miles <= radius)
-      .sort((a, b) => a.distance_miles - b.distance_miles),
-    center,
-    location: "Midtown Manhattan · fictional demo",
-    demo: true,
-    retrieved_at: new Date().toISOString(),
-  };
-}
 function searchValues() {
-  const values = Object.fromEntries(new FormData($("#search")));
-  values.demo = $("[name=demo]").checked;
-  return values;
+  return {
+    location_mode: "zip",
+    zip_code: $("#zip").value.trim(),
+    radius: Number($("[name=radius]").value),
+    limit: 100,
+  };
 }
 async function search(override = {}) {
   const id = ++requestNumber;
+  locationAttempt++;
   controller?.abort();
   controller = new AbortController();
   const data = { ...searchValues(), ...override };
+  lastRequest = data;
   $("#submit").disabled = true;
   $("#message").classList.remove("error");
-  $("#message").textContent = "Finding your next charge…";
+  $("#message").textContent = "Finding charging stations…";
   $("#retry").hidden = true;
   $("#results").setAttribute("aria-busy", "true");
   if (!state.stations.length)
@@ -859,36 +887,44 @@ async function search(override = {}) {
       ...Array.from({ length: 3 }, () => el("div", null, "skeleton")),
     );
   try {
-    const result = data.demo
-      ? await demoSearch(data)
-      : await api("api/search", data, controller.signal);
+    const result = await api("api/search", data, controller.signal);
     if (id !== requestNumber) return;
     state.stations = result.stations;
     state.center = result.center;
     state.radius = Number(data.radius);
-    state.demo = result.demo;
     state.retrieved = result.retrieved_at;
-    updateSearchScope();
-    if ($("#location-mode").value === "zip") $("#search-settings").open = false;
-    save("last-results", { ...result, radius: state.radius });
+    state.hasSearched = true;
+    state.query = data;
+    const label =
+      data.location_mode === "zip"
+        ? result.location
+        : data.label || "Nearby charging";
+    save("last-results", {
+      ...result,
+      radius: state.radius,
+      location: label,
+      query: data,
+    });
+    $("#clear-location").hidden = !$("#zip").value;
     updateNetworkOptions();
     clearDetail();
-    $("#message").textContent = result.demo
-      ? "Fictional examples · not real charging locations."
-      : `Retrieved ${new Date(result.retrieved_at).toLocaleString()} · Up to 100 reported stations. Live availability unavailable.`;
-    $("#map-location").textContent = result.demo
-      ? "Midtown Manhattan"
-      : result.location;
-    $("#map-location-sub").textContent = result.demo
-      ? "New York, United States"
-      : "Approximate search center";
+    $("#message").textContent =
+      `${result.stations.length} stations found. Live plug availability is not provided.`;
+    $("#map-location").textContent = label;
+    $("#map-location-sub").textContent =
+      data.location_mode === "zip"
+        ? "Distances from the ZIP code center"
+        : "Distances from your search location";
     $("#radius-label").textContent = `${state.radius} mi radius`;
     $("#search-area").hidden = true;
     fitResults();
   } catch (error) {
     if (error.name !== "AbortError" && id === requestNumber) {
       $("#message").textContent =
-        `${error.message} Previous results are preserved.`;
+        error.message +
+        (state.stations.length
+          ? " Your previous results are still shown."
+          : "");
       $("#message").classList.add("error");
       $("#retry").hidden = false;
       if (!state.stations.length) render();
@@ -900,24 +936,39 @@ async function search(override = {}) {
     }
   }
 }
-$("#search").onsubmit = (e) => {
-  e.preventDefault();
+$("#search").onsubmit = (event) => {
+  event.preventDefault();
   search();
 };
-$("#retry").onclick = () => search();
+$("#retry").onclick = () => search(lastRequest || {});
 $("#locate").onclick = () => {
   if (!navigator.geolocation)
-    return toast("Location is unavailable. Enter a ZIP code instead.");
+    return toast(
+      "Location is unavailable on this device. Enter a ZIP code instead.",
+    );
+  const attempt = ++locationAttempt;
+  $("#locate").disabled = true;
+  $("#message").textContent = "Waiting for your location permission…";
   navigator.geolocation.getCurrentPosition(
-    (p) => {
-      $("#location-mode").value = "coordinates";
-      updateMode();
-      $("[name=latitude]").value = p.coords.latitude;
-      $("[name=longitude]").value = p.coords.longitude;
-      search();
+    (position) => {
+      $("#locate").disabled = false;
+      if (attempt !== locationAttempt) return;
+      $("#zip").value = "";
+      $("#clear-location").hidden = true;
+      search({
+        location_mode: "coordinates",
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        label: "Near your location",
+      });
     },
-    () =>
-      toast("Location permission unavailable. Search with a ZIP code instead."),
+    () => {
+      $("#locate").disabled = false;
+      if (attempt !== locationAttempt) return;
+      $("#message").textContent =
+        "Location access was unavailable. Enter a US ZIP code to search instead.";
+      $("#zip").focus();
+    },
     { timeout: 10000 },
   );
 };
@@ -928,7 +979,6 @@ function infoRow(container, label, value) {
 }
 function showDetail(s) {
   if (innerWidth <= 800) {
-    $("#search-settings").open = false;
     $("#filters-panel").hidden = true;
     $("#filters-toggle").setAttribute("aria-expanded", "false");
   }
@@ -946,14 +996,6 @@ function showDetail(s) {
     "arrow",
   );
   panel.append(back, el("h2", stationName(s)), el("p", s.address), status(s));
-  if (s.fictional)
-    panel.append(
-      el(
-        "p",
-        "Fictional demo station. Not a real charging location.",
-        "detail-demo",
-      ),
-    );
   const metrics = el("div", null, "detail-metrics");
   for (const [value, label] of [
     [`${s.max_power_kw ?? "—"} kW`, "maximum advertised power"],
@@ -968,14 +1010,13 @@ function showDetail(s) {
   }
   panel.append(metrics);
   const actions = el("div", null, "detail-actions");
-  if (!s.fictional)
-    actions.append(
-      link(
-        "Get directions",
-        `https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}`,
-        "primary",
-      ),
-    );
+  actions.append(
+    link(
+      "Get directions",
+      `https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}`,
+      "primary",
+    ),
+  );
   actions.append(
     button("Estimate charge", () => openEstimator(s), "secondary", "bolt"),
   );
@@ -1130,8 +1171,6 @@ function showDetail(s) {
     button(
       "Add to trip",
       () => {
-        if (s.fictional)
-          return toast("Fictional demo stations cannot be navigation stops.");
         if (!state.tripStops.some((x) => x.id === s.id))
           state.tripStops.push(s);
         toast("Added to your trip on this device.");
@@ -1191,10 +1230,7 @@ function keepSelectedPinVisible(s) {
   const searchBottom =
     $(".sidebar-top").getBoundingClientRect().bottom - bounds.top;
   const sheetTop = $(".sidebar").getBoundingClientRect().top - bounds.top;
-  const bannerBottom = $("#demo-banner").hidden
-    ? 0
-    : $("#demo-banner").getBoundingClientRect().bottom - bounds.top;
-  const top = Math.max(searchBottom, bannerBottom) + 48;
+  const top = searchBottom + 48;
   const bottom = sheetTop - 32;
   const point = map.project([s.longitude, s.latitude]);
   if (
@@ -1770,7 +1806,7 @@ function openComparison() {
     wrap,
     el(
       "div",
-      "Reported operational status is not live occupancy. Prices and accessibility require confirmation. Demo locations are fictional.",
+      "Reported operational status is not live occupancy. Confirm pricing and access with the operator before you travel.",
       "notice",
     ),
   );
@@ -1862,17 +1898,6 @@ function openNetworks() {
   body.append(chips, grid);
 }
 $("#networks-open").onclick = openNetworks;
-function parseCoordinate(value) {
-  const parts = value.split(",").map((x) => Number(x.trim()));
-  if (
-    parts.length !== 2 ||
-    !parts.every(Number.isFinite) ||
-    Math.abs(parts[0]) > 90 ||
-    Math.abs(parts[1]) > 180
-  )
-    throw Error("Use latitude, longitude coordinates for both locations.");
-  return parts;
-}
 function drawRoute() {
   if (!map?.isStyleLoaded() || !state.route?.geometry) return;
   const data = {
@@ -1897,10 +1922,10 @@ function openTrip() {
   body.append(
     el(
       "p",
-      "Coordinate-based driving routes with explicit range assumptions. Navigation and routing providers receive the locations you submit.",
+      "Choose departure and destination ZIP codes. Route and charging-stop estimates use explicit range assumptions.",
     ),
   );
-  const routingDisabled = !config.routing || config.mode === "static";
+  const routingDisabled = !config.routing;
   if (routingDisabled) {
     const notice = el(
       "div",
@@ -1917,20 +1942,25 @@ function openTrip() {
     assumptionGrid = el("div", null, "form-grid");
   inputField(
     grid,
-    "Origin · latitude, longitude",
-    "origin",
-    "40.758, -73.9855",
+    "From · US ZIP code",
+    "origin_zip",
+    state.query?.zip_code || "",
     "text",
-    { required: true },
+    {
+      required: true,
+      inputMode: "numeric",
+      pattern: "[0-9]{5}",
+      maxLength: 5,
+      placeholder: "Departure ZIP",
+    },
   );
-  inputField(
-    grid,
-    "Destination · latitude, longitude",
-    "destination",
-    "",
-    "text",
-    { required: true, placeholder: "e.g. 41.3083, -72.9279" },
-  );
+  inputField(grid, "To · US ZIP code", "destination_zip", "", "text", {
+    required: true,
+    inputMode: "numeric",
+    pattern: "[0-9]{5}",
+    maxLength: 5,
+    placeholder: "Destination ZIP",
+  });
   inputField(
     assumptionGrid,
     "Assumed full-charge range (mi)",
@@ -2056,7 +2086,7 @@ function openTrip() {
       timeline.append(
         el(
           "p",
-          "No stops yet. Open a station’s details and choose Add to trip, or add a route candidate above. Demo stations are fictional and not for navigation.",
+          "No stops yet. Open a station’s details and choose Add to trip, or choose a charging stop along your route.",
           "assumptions",
         ),
       );
@@ -2116,13 +2146,12 @@ function openTrip() {
       if (reserve >= start)
         throw Error("Starting battery percentage must exceed arrival reserve.");
       state.route = await api("api/route", {
-        origin: parseCoordinate(values.origin),
-        destination: parseCoordinate(values.destination),
+        origin_zip: values.origin_zip,
+        destination_zip: values.destination_zip,
         range_miles: (range * start) / 100,
         reserve_miles: (range * reserve) / 100,
         corridor_miles: Number(values.corridor),
         include_stations: true,
-        demo: false,
         vehicle: vehicle() || {},
       });
       state.stations = state.route.stations;
@@ -2155,7 +2184,6 @@ function exportCSV() {
     "access",
     "pricing",
     "verified",
-    "fictional",
   ];
   const escape = (value) => {
     let text = String(value ?? "");
@@ -2182,10 +2210,16 @@ function openTools() {
   grid.append(
     button("Export filtered results to CSV", exportCSV, "secondary", "list"),
     button(
-      "Save this search",
+      "Save ZIP search",
       () => {
+        if (!state.query?.zip_code)
+          return toast("Search a ZIP code first to save that location.");
         state.searches = [
-          { ...searchValues(), saved_at: new Date().toISOString() },
+          {
+            zip_code: state.query.zip_code,
+            radius: state.radius,
+            saved_at: new Date().toISOString(),
+          },
           ...state.searches,
         ].slice(0, 10);
         save("searches", state.searches);
@@ -2240,26 +2274,20 @@ function openTools() {
     body.append(
       el(
         "p",
-        "No saved searches. Choose Save this search above to keep your current location and search settings on this device.",
+        "Save a ZIP search to return to the same area later. Saved searches stay on this device.",
         "assumptions",
       ),
     );
   state.searches.forEach((s, i) => {
     const row = el("div", null, "saved-search");
     row.append(
-      el(
-        "span",
-        `${s.location_mode === "zip" ? s.zip_code : `${s.latitude}, ${s.longitude}`} · ${s.radius} mi ${s.demo ? "· demo" : ""}`,
-      ),
+      el("span", `ZIP ${s.zip_code} · ${s.radius} mi`),
       button(
         "Search",
         () => {
-          for (const [key, value] of Object.entries(s)) {
-            const field = $(`[name="${key}"]`);
-            if (field && field.type !== "checkbox") field.value = value;
-          }
-          updateMode();
-          $("[name=demo]").checked = config.mode === "static" ? true : s.demo;
+          $("#zip").value = s.zip_code;
+          $("[name=radius]").value = String(s.radius);
+          $("#clear-location").hidden = false;
           closeModal();
           search();
         },
@@ -2311,29 +2339,15 @@ function openTools() {
       "notice",
     ),
   );
-  if (config.mode !== "static")
-    body.append(link("API documentation", "./docs", "secondary"));
-}
-$("#more-actions").onclick = openTools;
-$("#data-info").onclick = () => {
-  const body = openModal("Designed around honest data.");
   body.append(
-    el(
-      "div",
-      "This demo contains fictional stations, fictional networks and illustrative specifications. None are real destinations. Do not use them for navigation.",
-      "notice warning",
-    ),
-    el(
-      "p",
-      "Live station search, when configured, is provided by Open Charge Map. Operational status is reported, not live occupancy. Distances are straight-line miles unless explicitly labeled driving distance. Missing access, pricing, vehicle or amenity information stays unknown.",
-    ),
-    link("Open Charge Map data and terms", "https://openchargemap.org"),
-    el(
-      "p",
-      "Map data: OpenStreetMap contributors / OpenFreeMap. See visible map attribution. Connector illustrations are original and educational, not engineering drawings.",
+    link(
+      "API documentation",
+      new URL("docs", config.api_base || document.baseURI).href,
+      "secondary",
     ),
   );
-};
+}
+$("#more-actions").onclick = openTools;
 window.addEventListener("offline", () => {
   $("#message").textContent =
     "Offline · showing retained station snapshots, not live data. Maps may be unavailable.";
@@ -2341,26 +2355,60 @@ window.addEventListener("offline", () => {
 async function initialize() {
   updateNetworkOptions();
   const params = new URLSearchParams(location.search);
-  for (const key of ["connector", "network"])
-    if (params.has(key)) $("#" + key).value = params.get(key);
+  for (const key of ["connector", "network"]) {
+    if (!params.has(key)) continue;
+    const value = params.get(key);
+    if (
+      key === "network" &&
+      ![...$("#network").options].some((option) => option.value === value)
+    )
+      $("#network").add(new Option(value, value));
+    $("#" + key).value = value;
+  }
   if (params.get("power") === "150")
     $("#power").setAttribute("aria-pressed", "true");
   if (params.get("operational") === "1")
     $("#operational").setAttribute("aria-pressed", "true");
-  if (!navigator.onLine) {
-    const cached = load("last-results", null);
-    if (cached) {
-      state.stations = cached.stations;
-      state.center = cached.center;
-      state.retrieved = cached.retrieved_at;
-      state.demo = cached.demo;
-      state.radius = cached.radius;
-      $("#message").textContent =
-        `Offline snapshot retrieved ${new Date(cached.retrieved_at).toLocaleString()}. Not live.`;
-    }
+  const cached = load("last-results", null);
+  if (cached?.demo === true) {
+    try {
+      localStorage.removeItem("current-last-results");
+    } catch {}
+  } else if (
+    !navigator.onLine &&
+    cached?.retrieved_at &&
+    Array.isArray(cached.stations)
+  ) {
+    state.stations = cached.stations.filter(isSourceStation);
+    state.center = cached.center;
+    state.retrieved = cached.retrieved_at;
+    state.radius = cached.radius;
+    state.query = cached.query || null;
+    state.hasSearched = true;
+    $("#message").textContent =
+      `Offline snapshot retrieved ${new Date(cached.retrieved_at).toLocaleString()}. Not live.`;
+    $("#map-location").textContent = cached.location || "Saved search area";
   }
   render();
   initMap();
+  if (config.api_base && navigator.onLine) {
+    api("api/config")
+      .then((capabilities) => {
+        for (const key of [
+          "routing",
+          "live_search",
+          "terrain_url",
+          "satellite_url",
+        ])
+          config[key] = capabilities[key];
+        if (
+          map?.isStyleLoaded() &&
+          (config.terrain_url || config.satellite_url)
+        )
+          setupMapLayers();
+      })
+      .catch(() => {});
+  }
   if (load("list", false)) setListMode(true);
   if (boot.error) {
     $("#message").textContent = boot.error;
@@ -2369,7 +2417,7 @@ async function initialize() {
   const stationId = params.get("station");
   if (stationId) {
     let station = state.stations.find((s) => String(s.id) === stationId);
-    if (!station && config.mode !== "static") {
+    if (!station) {
       try {
         station = (await api(`api/station/${encodeURIComponent(stationId)}`))
           .station;
@@ -2379,7 +2427,7 @@ async function initialize() {
       }
     }
     if (station) showDetail(station);
-    else toast("That station is unavailable in this demo.");
+    else toast("This station could not be loaded. Try searching its ZIP code.");
   }
   if ("serviceWorker" in navigator) {
     try {

@@ -383,75 +383,45 @@ h1 {
   border-radius: var(--radius-md);
   padding: 0 14px;
 }
-.search-settings {
-  margin-top: 4px;
-}
-.search-settings summary {
-  min-height: 44px;
+.search-assist {
   display: flex;
   align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  font-size: 12px;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  margin: 4px 0;
+}
+.search-assist .text-button {
+  font-size: 13px;
+}
+.search-assist .icon {
+  width: 17px;
+  height: 17px;
+}
+.radius-control select {
+  min-height: 44px;
+  padding: 8px 4px 8px 12px;
+  border: 0;
+  background: none;
   color: var(--muted);
-  list-style: none;
+  font-size: 12px;
 }
-.search-settings summary::-webkit-details-marker {
-  display: none;
-}
-.search-settings summary:before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-right: 1px solid currentColor;
-  border-bottom: 1px solid currentColor;
-  transform: rotate(-45deg);
-  margin-right: 4px;
-}
-.search-settings[open] summary:before {
-  transform: rotate(45deg);
-}
-#search-scope {
-  margin-left: auto;
-}
-.search-options,
 .field-row {
   display: flex;
   gap: 12px;
 }
-.search-options > label,
 .field-row > label {
   flex: 1;
   min-width: 0;
   color: var(--muted);
   font-size: 12px;
 }
-.search-options select,
 .field-row input,
 .field-row select {
   display: block;
   width: 100%;
   margin: 6px 0 12px;
   font-size: 14px;
-}
-.demo-control {
-  border-top: 1px solid var(--line);
-  padding: 12px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.demo-control > label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 32px;
-  color: var(--text);
-}
-#connection-mode {
-  padding-left: 26px;
 }
 .quick-filters {
   display: flex;
@@ -714,11 +684,6 @@ h1 {
   background: var(--accent-soft);
   color: var(--accent);
 }
-.fictional-label {
-  font-size: 11px;
-  color: var(--muted);
-  padding: 0 4px;
-}
 .sidebar-footer {
   display: flex;
   align-items: center;
@@ -838,35 +803,6 @@ h1 {
   color: var(--text);
 }
 .view-toggle .icon {
-  width: 16px;
-}
-.demo-banner {
-  position: absolute;
-  left: 24px;
-  top: 108px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--muted);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: 0 4px 0 12px;
-}
-.demo-tag {
-  font-weight: 550;
-  color: var(--text);
-  padding-right: 8px;
-  border-right: 1px solid var(--line);
-}
-.demo-banner button {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  padding: 0;
-}
-.demo-banner .icon {
   width: 16px;
 }
 .map-controls {
@@ -1253,11 +1189,6 @@ h1 {
   font-size: 13px;
   font-weight: 500;
 }
-.detail .detail-demo {
-  font-size: 12px;
-  color: var(--warning);
-  margin: 8px 0;
-}
 .secondary[aria-pressed="true"] {
   border-color: var(--accent);
   background: var(--accent-soft);
@@ -1278,6 +1209,7 @@ h1 {
   height: 24px;
   margin-bottom: 16px;
 }
+.empty-state h2,
 .empty-state h3 {
   color: var(--text);
   font-size: 17px;
@@ -1678,7 +1610,6 @@ dialog::backdrop {
 }
 .list-only #map,
 .list-only .map-controls,
-.list-only .demo-banner,
 .list-only .map-bottom,
 .list-only #map-warning,
 .list-only #search-area {
@@ -1874,19 +1805,9 @@ dialog::backdrop {
   .search-button .icon {
     display: none;
   }
-  .search-settings {
+  .search-assist {
     margin: 0;
-  }
-  .search-settings summary {
-    min-height: 44px;
-    font-size: 11px;
-    padding: 0 8px;
-  }
-  .search-settings[open] {
-    padding: 0 8px;
-  }
-  .search-settings[open] summary {
-    padding-inline: 0;
+    padding-inline: 8px;
   }
   .quick-filters {
     padding: 0 8px 8px;
@@ -1999,24 +1920,6 @@ dialog::backdrop {
   .view-toggle .icon {
     width: 17px;
     height: 17px;
-  }
-  .demo-banner {
-    top: 180px;
-    left: 12px;
-    right: 12px;
-    font-size: 10px;
-    line-height: 1.4;
-    min-height: 48px;
-    padding-left: 10px;
-    gap: 6px;
-  }
-  .demo-banner button {
-    width: 44px;
-    min-width: 44px;
-  }
-  .demo-tag {
-    font-size: 11px;
-    padding-right: 6px;
   }
   .map-controls {
     right: 12px;
@@ -2200,9 +2103,6 @@ dialog::backdrop {
     --sheet-size: min(64%, calc(100% - 176px));
   }
   .maplibregl-ctrl-top-right {
-    display: none;
-  }
-  .demo-banner {
     display: none;
   }
   .search-area {

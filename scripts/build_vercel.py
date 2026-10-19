@@ -10,6 +10,11 @@ ASSET_SUFFIXES = {".css", ".js", ".json", ".svg", ".webmanifest", ".png", ".jpg"
 
 
 def build():
+    if PUBLIC.is_symlink():
+        raise ValueError("The owned public build directory must not be a symlink.")
+    if PUBLIC.exists():
+        shutil.rmtree(PUBLIC)
+    PUBLIC.mkdir(parents=True)
     assets = []
     digest = hashlib.sha256((ROOT / "templates/index.html").read_bytes())
     for source in sorted((ROOT / "static").rglob("*")):
@@ -25,7 +30,8 @@ def build():
         if source.name != "sw.js":
             assets.append("./" + relative.as_posix())
     worker = (ROOT / "static/sw.js").read_text(encoding="utf-8")
-    worker = worker.replace("current-shell-v1", "current-shell-" + digest.hexdigest()[:16])
+    worker = worker.replace("current-shell-v2", "current-shell-" + digest.hexdigest()[:16])
+    assets = [asset + "?v=3" if asset in ("./static/app.js", "./static/app.css") else asset for asset in assets]
     worker = worker.replace("/* BUILD_ASSETS */", "SHELL_ASSETS = " + json.dumps(["./", *assets]) + ";")
     (PUBLIC / "sw.js").write_text(worker, encoding="utf-8")
     print("Prepared owned browser assets in public/; Flask remains the backend.")

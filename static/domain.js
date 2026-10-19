@@ -151,12 +151,3 @@ export function estimate(input) {
     complete,
   };
 }
-export function milesBetween(a, b) {
-  const rad = Math.PI / 180,
-    lat = (b[0] - a[0]) * rad,
-    lon = (b[1] - a[1]) * rad;
-  const h =
-    Math.sin(lat / 2) ** 2 +
-    Math.cos(a[0] * rad) * Math.cos(b[0] * rad) * Math.sin(lon / 2) ** 2;
-  return 3958.7613 * 2 * Math.asin(Math.sqrt(Math.min(1, Math.max(0, h))));
-}

@@ -1,4 +1,4 @@
-name: Test and publish demo
+name: Test and publish live client
 
 on:
   push:
@@ -33,12 +33,12 @@ jobs:
         run: python -m unittest discover -s tests/browser -v
       - name: Owned JavaScript budget
         run: python -c "from pathlib import Path; n=sum(p.stat().st_size for p in Path('static').rglob('*.js')); print(f'Owned JavaScript {n} / 153600 bytes'); assert n <= 153600, 'Owned JavaScript exceeds 150 KiB budget'"
-      - name: Export credential-free Pages demo
+      - name: Export credential-free Pages client
         run: python scripts/build_pages.py --output site
-      - name: Retain demo build for review
+      - name: Retain Pages build for review
         uses: actions/upload-artifact@v4
         with:
-          name: static-demo
+          name: pages-client
           path: site/
           include-hidden-files: true
       - name: Configure Pages
@@ -61,6 +61,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy fictional demo
+      - name: Deploy live API client
         id: deployment
         uses: actions/deploy-pages@v4

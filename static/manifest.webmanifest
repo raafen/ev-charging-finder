@@ -2,7 +2,7 @@
   "id": "../",
   "name": "Current — EV Charging Finder",
   "short_name": "Current",
-  "description": "Find charging stations and explore connector education. Offline shell uses fictional demo data.",
+  "description": "Find reported EV charging stations, compare options and explore connector education. Live searches require an internet connection.",
   "start_url": "../",
   "scope": "../",
   "display": "standalone",

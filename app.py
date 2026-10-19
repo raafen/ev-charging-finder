@@ -78,6 +78,15 @@ def response_context(response):
     response.headers["X-Request-ID"] = getattr(g, "request_id", "")
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if request.path.startswith("/api/"):
+        response.vary.add("Origin")
+        origins = {value.strip() for value in os.environ.get("CORS_ALLOWED_ORIGINS", "https://raafen.github.io").split(",") if value.strip() and value.strip() != "*"}
+        origin = request.headers.get("Origin")
+        if origin in origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            if request.method == "OPTIONS":
+                response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+                response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     if request.path.startswith("/api/") or request.path == "/":
         response.headers["Cache-Control"] = "no-store"
     # No IPs, coordinates, query strings, payloads, upstream URLs or credentials.
@@ -106,6 +115,8 @@ def payload():
 
 
 def search_input(data):
+    if "demo" in data:
+        raise ValueError("Demo requests are no longer supported. Search for a real location.")
     if isinstance(data.get("radius"), bool) or isinstance(data.get("limit"), bool):
         raise ValueError("Radius and result limit must be numbers, not booleans.")
     radius = float(data.get("radius", 10))
@@ -114,40 +125,47 @@ def search_input(data):
     if float(raw_limit) != limit:
         raise ValueError("Result limit must be a whole number.")
     validate(0, 0, radius, limit)
-    demo = data.get("demo") is True
-    mode = data.get("location_mode", "coordinates")
+    mode = data.get("location_mode", "zip")
     if mode == "zip":
-        lat, lon, location = lookup_zip(str(data.get("zip_code", "")), demo=demo)
+        lat, lon, location = lookup_zip(str(data.get("zip_code", "")))
     elif mode == "coordinates":
         if isinstance(data.get("latitude"), bool) or isinstance(data.get("longitude"), bool):
             raise ValueError("Coordinates must be numbers, not booleans.")
-        lat, lon = float(data.get("latitude", 40.758)), float(data.get("longitude", -73.9855))
-        location = "Fictional demo near selected coordinates" if demo else "Selected coordinates"
+        if data.get("latitude") is None or data.get("longitude") is None:
+            raise ValueError("Latitude and longitude are required for location search.")
+        lat, lon = float(data["latitude"]), float(data["longitude"])
+        location = "Selected location"
     else:
         raise ValueError("Choose ZIP code or coordinates.")
-    stations = search(lat, lon, radius, limit, operational_only=data.get("operational") is True, demo=demo)
-    return {"stations": stations, "center": [lat, lon], "location": location, "demo": demo, "retrieved_at": timestamp()}
+    stations = search(lat, lon, radius, limit, operational_only=data.get("operational") is True)
+    return {"stations": stations, "center": [lat, lon], "location": location, "retrieved_at": timestamp()}
 
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    values = {"latitude": "40.7580", "longitude": "-73.9855", "radius": "10", "limit": "20", "zip_code": "", "location_mode": "coordinates"}
-    error, location, status = None, "Fictional Manhattan demo", 200
-    demo, operational = True, False
-    stations = search(40.758, -73.9855, demo=True)
+    values = {"zip_code": "", "radius": "10", "limit": "100"}
+    stations, error, location, status = [], None, "", 200
+    operational = False
+    result = None
     if request.method == "POST":
         values = {key: request.form.get(key, values[key]) for key in values}
-        demo = request.form.get("demo") == "on"
         operational = request.form.get("operational") == "on"
         try:
-            result = search_input({**values, "demo": demo, "operational": operational})
+            if "demo" in request.form:
+                raise ValueError("Demo requests are no longer supported. Search for a real location.")
+            if request.form.get("location_mode", "zip") != "zip":
+                raise ValueError("Enter a ZIP code to search.")
+            result = search_input({**values, "location_mode": "zip", "operational": operational})
             stations, location = result["stations"], result["location"]
         except (ValueError, TypeError, OverflowError, FinderError) as exc:
             stations, error = [], str(exc)
             status = exc.status if isinstance(exc, FinderError) else 400
     config = public_config()
-    initial_data = {"stations": stations, "demo": demo, "config": config, "error": error}
-    return render_template("index.html", values=values, stations=stations, error=error, demo=demo,
+    initial_data = {"stations": stations, "config": config, "error": error,
+                    "center": result["center"] if result else None,
+                    "location": result["location"] if result else None,
+                    "retrieved_at": result["retrieved_at"] if result else None}
+    return render_template("index.html", values=values, stations=stations, error=error,
                            operational=operational, location=location, config=config, initial_data=initial_data), status
 
 
@@ -188,7 +206,7 @@ def api_search():
 def api_station(station_id):
     try:
         station = get_station(station_id)
-        return jsonify(station=station, demo=station["fictional"], retrieved_at=timestamp())
+        return jsonify(station=station, retrieved_at=timestamp())
     except (TypeError, ValueError, FinderError) as exc:
         return failure(exc)
 

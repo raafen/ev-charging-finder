@@ -113,25 +113,54 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(self.client.get("/readyz").status_code, 200)
         page = self.client.get("/")
         self.assertNotIn(b"private-secret", page.data)
-        self.assertIn(b"demo-8", page.data)
+        self.assertNotIn(b"demo-8", page.data)
 
-    def test_search_validation_and_stable_demo_sharing(self):
-        for body in ([], None, {"latitude": True}, {"radius": "nan"}, {"limit": 1.5}):
+    def test_search_validation_and_numeric_station_ids(self):
+        for body in ([], None, {}, {"latitude": True}, {"radius": "nan"}, {"limit": 1.5},
+                     {"location_mode": "coordinates"}, {"location_mode": "coordinates", "latitude": 0},
+                     {"location_mode": "coordinates", "latitude": True, "longitude": 0},
+                     {"location_mode": "coordinates", "latitude": 91, "longitude": 0},
+                     {"demo": True}, {"demo": False}):
             with self.subTest(body=body):
                 response = self.client.post("/api/search", json=body)
                 self.assertEqual(response.status_code, 400)
                 self.assertIn("request_id", response.json)
-        response = self.client.post("/api/search", json={"demo": True})
+        for station_id in ("demo-1", "demo-999", "0", "-1", "abc"):
+            self.assertEqual(self.client.get(f"/api/station/{station_id}").status_code, 400)
+        with patch("finder.OpenChargeMapProvider") as factory:
+            factory.return_value.station.return_value = {"ID": 123, "AddressInfo": {"Title": "Test record", "Latitude": 0, "Longitude": 0}}
+            response = self.client.get("/api/station/123")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("retrieved_at", response.json)
-        station = self.client.get("/api/station/demo-1")
-        self.assertTrue(station.json["demo"])
-        self.assertEqual(station.json["station"]["id"], "demo-1")
-        self.assertEqual(self.client.get("/api/station/demo-999").status_code, 404)
+        self.assertEqual(response.json["station"]["id"], 123)
+        self.assertNotIn("demo", response.json)
+        self.assertNotIn("fictional", response.json["station"])
+
+    @patch("finder.OpenChargeMapProvider")
+    def test_internal_location_search_real_empty_and_upstream_error(self, factory):
+        provider = factory.return_value
+        provider.search.return_value = [{"ID": 1, "AddressInfo": {"Title": "Test record", "Latitude": 0, "Longitude": 0}}]
+        body = {"location_mode": "coordinates", "latitude": 0, "longitude": 0}
+        response = self.client.post("/api/search", json=body)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["center"], [0, 0])
+        self.assertEqual(response.json["location"], "Selected location")
+        self.assertEqual(response.json["stations"][0]["name"], "Test record")
+        self.assertTrue(response.json["retrieved_at"])
+        provider.search.return_value = []
+        self.assertEqual(self.client.post("/api/search", json=body).json["stations"], [])
+        provider.search.side_effect = FinderError("Station provider timed out.", 504)
+        response = self.client.post("/api/search", json=body)
+        self.assertEqual(response.status_code, 504)
+        self.assertEqual(response.json["error"], "Station provider timed out.")
+
+    def test_legacy_html_demo_request_rejected(self):
+        response = self.client.post("/", data={"zip_code": "10036", "demo": "on"})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"no longer supported", response.data)
 
     @patch.dict("os.environ", {"OCM_API_KEY": "", "ROUTING_BASE_URL": ""})
     def test_unconfigured_live_and_route_have_useful_status(self):
-        self.assertEqual(self.client.post("/api/search", json={}).status_code, 503)
+        self.assertEqual(self.client.post("/api/search", json={"location_mode": "coordinates", "latitude": 0, "longitude": 0}).status_code, 503)
         response = self.client.post("/api/route", json={"origin": [40, -73], "destination": [41, -74]})
         self.assertEqual(response.status_code, 503)
         self.assertIn("not configured", response.json["error"])
@@ -146,10 +175,36 @@ class ProviderTests(unittest.TestCase):
 
     def test_request_log_excludes_private_inputs(self):
         with patch.object(app.logger, "info") as log:
-            response = self.client.post("/api/search", json={"demo": True, "latitude": 41.123456, "longitude": -73.654321})
+            response = self.client.post("/api/search", json={"location_mode": "coordinates", "latitude": 41.123456, "longitude": -73.654321})
         record = json.loads(log.call_args.args[0])
         self.assertEqual(record["request_id"], response.headers["X-Request-ID"])
         self.assertEqual(set(record), {"event", "request_id", "method", "endpoint", "status", "duration_ms"})
+
+    @patch.dict("os.environ", {"CORS_ALLOWED_ORIGINS": "https://raafen.github.io,https://allowed.invalid"})
+    def test_cors_exact_origin_preflight_and_errors(self):
+        for origin in ("https://raafen.github.io", "https://allowed.invalid"):
+            response = self.client.options("/api/search", headers={"Origin": origin, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["Access-Control-Allow-Origin"], origin)
+            self.assertEqual(response.headers["Access-Control-Allow-Methods"], "GET, POST, OPTIONS")
+            self.assertEqual(response.headers["Access-Control-Allow-Headers"], "Content-Type")
+            self.assertNotIn("Access-Control-Allow-Credentials", response.headers)
+            self.assertIn("Origin", response.vary)
+            error = self.client.post("/api/search", json={}, headers={"Origin": origin})
+            self.assertEqual(error.status_code, 400)
+            self.assertEqual(error.headers["Access-Control-Allow-Origin"], origin)
+            missing = self.client.get("/api/missing", headers={"Origin": origin})
+            self.assertEqual(missing.status_code, 404)
+            self.assertEqual(missing.headers["Access-Control-Allow-Origin"], origin)
+        for origin in ("https://raafen.github.io.evil.invalid", "http://raafen.github.io", "null"):
+            response = self.client.options("/api/search", headers={"Origin": origin})
+            self.assertNotIn("Access-Control-Allow-Origin", response.headers)
+            self.assertIn("Origin", response.vary)
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_cors_default_pages_origin(self):
+        response = self.client.get("/api/config", headers={"Origin": "https://raafen.github.io"})
+        self.assertEqual(response.headers["Access-Control-Allow-Origin"], "https://raafen.github.io")
 
 
 class RouteTests(unittest.TestCase):
@@ -163,6 +218,21 @@ class RouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
         response = self.client.post("/api/route", json={"origin": [40, -73], "destination": [41, -74], "range_miles": 20, "reserve_miles": 20})
         self.assertEqual(response.status_code, 400)
+
+    @patch("finder.lookup_zip")
+    @patch("finder.OSRMProvider")
+    def test_route_zip_locations_resolved_server_side(self, factory, lookup):
+        lookup.side_effect = [(40, -73, "Departure"), (41, -74, "Destination")]
+        factory.return_value.route.return_value = {"distance_miles": 90, "duration_minutes": 100}
+        response = self.client.post("/api/route", json={"origin_zip": "01001", "destination_zip": "10036", "include_stations": False})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([call.args[0] for call in lookup.call_args_list], ["01001", "10036"])
+        factory.return_value.route.assert_called_once_with([[40, -73], [41, -74]])
+        self.assertNotIn("demo", response.json)
+
+    def test_route_rejects_legacy_and_mixed_inputs(self):
+        for data in ({"demo": True}, {"demo": False}, {"origin_zip": "01001", "origin": [0, 0]}, {"origin_zip": "bad", "destination_zip": "10036"}):
+            self.assertEqual(self.client.post("/api/route", json=data).status_code, 400)
 
     @patch("providers.request_json")
     def test_osrm_coordinates_units_and_provider_errors(self, fetch):

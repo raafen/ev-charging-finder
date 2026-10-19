@@ -12,14 +12,13 @@ from app import app as flask_app
 
 
 class SearchRequest(BaseModel):
-    location_mode: Literal["zip", "coordinates"] = "coordinates"
-    zip_code: str = Field(default="10036", description="Five-digit US ZIP. Offline demo supports 10036 only.")
-    latitude: float = Field(default=40.758, ge=-90, le=90)
-    longitude: float = Field(default=-73.9855, ge=-180, le=180)
+    location_mode: Literal["zip", "coordinates"] = "zip"
+    zip_code: str = Field(default="", description="Five-digit US ZIP; required for ZIP searches.")
+    latitude: float | None = Field(default=None, ge=-90, le=90, description="Required with longitude for internal coordinate searches.")
+    longitude: float | None = Field(default=None, ge=-180, le=180)
     radius: float = Field(default=10, gt=0, le=100, description="Straight-line search radius in miles.")
     limit: int = Field(default=100, ge=1, le=100)
     operational: bool = False
-    demo: bool = Field(default=False, description="True returns unmistakably fictional records without a provider key.")
 
 
 class Adapter(BaseModel):
@@ -48,7 +47,7 @@ class Connection(BaseModel):
 
 
 class Station(BaseModel):
-    id: int | str | None = None
+    id: int | None = None
     name: str = "Unnamed station"
     latitude: float | None = None
     longitude: float | None = None
@@ -59,7 +58,6 @@ class Station(BaseModel):
     operational: bool | None = None
     max_power_kw: float | None = None
     distance_miles: float | None = None
-    fictional: bool = False
 
 
 class CompatibilityRequest(BaseModel):
@@ -83,13 +81,14 @@ class EstimateRequest(BaseModel):
 
 
 class RouteRequest(BaseModel):
-    origin: list[float] = Field(min_length=2, max_length=2, description="[latitude, longitude]")
-    destination: list[float] = Field(min_length=2, max_length=2, description="[latitude, longitude]")
+    origin_zip: str | None = Field(default=None, description="Five-digit US departure ZIP; supply with destination_zip.")
+    destination_zip: str | None = Field(default=None, description="Five-digit US destination ZIP.")
+    origin: list[float] | None = Field(default=None, min_length=2, max_length=2, description="Internal [latitude, longitude]; use instead of ZIP fields.")
+    destination: list[float] | None = Field(default=None, min_length=2, max_length=2, description="Internal [latitude, longitude].")
     corridor_miles: float = Field(default=3, ge=0.1, le=25)
     range_miles: float | None = Field(default=None, ge=1, le=1000, description="Assumed departure range, also restored at each stop.")
     reserve_miles: float = Field(default=20, ge=0, le=1000)
     include_stations: bool = True
-    demo: bool = False
     vehicle: Vehicle | None = None
     manual_station_costs: dict[str, float] | None = Field(default=None, description="Comparable session costs in one currency, keyed by station ID.")
 
@@ -109,7 +108,7 @@ def mounted_openapi():
         schemas[model.__name__] = model_schema
     error = {"description": "Validation, provider or rate-limit error. JSON contains error and request_id.", "content": {"application/json": {"schema": {"type": "object", "properties": {"error": {"type": "string"}, "request_id": {"type": "string"}}}}}}
     for path, model, summary, description in [
-        ("/api/search", SearchRequest, "Find nearby charging stations", "Returns stations, center [lat,lon], location, demo and retrieved_at. Distances are straight-line miles; reported status is not occupancy."),
+        ("/api/search", SearchRequest, "Find nearby charging stations", "Returns stations, center [lat,lon], location and retrieved_at. ZIP is required in ZIP mode; both coordinates are required in internal coordinate mode. Distances are straight-line miles; reported status is not occupancy."),
         ("/api/compatibility", CompatibilityRequest, "Check physical connector fit", "Returns physical and network results separately. Adapter direction and current type must match; no inferred Supercharger authorization."),
         ("/api/estimate", EstimateRequest, "Estimate charging time and cost", "Constant-power approximation capped by charger and supplied vehicle limits. Missing tariff fields leave total unknown. Returns battery/grid energy, minutes, added_miles, fees, tax, total and assumptions."),
         ("/api/route", RouteRequest, "Route and sample a charging corridor", "Requires server ROUTING_BASE_URL. Returns driving geometry, miles, minutes, sampled stations, detours and conditional stop plan. No traffic or exhaustive coverage guarantee."),
@@ -117,7 +116,7 @@ def mounted_openapi():
         schema["paths"][path] = {"post": {"tags": ["Charging companion"], "summary": summary, "description": description, "operationId": model.__name__, "requestBody": {"required": True, "content": {"application/json": {"schema": {"$ref": f"#/components/schemas/{model.__name__}"}}}}, "responses": {"200": {"description": "Normalized result", "content": {"application/json": {"schema": {"type": "object"}}}}, **{str(status): error for status in (400, 429, 502, 503, 504)}}}}
     for path, summary in [("/api/config", "Public provider capabilities (no credentials)"), ("/health", "Process health"), ("/ready", "Configuration readiness; does not probe providers")]:
         schema["paths"][path] = {"get": {"tags": ["Service"], "summary": summary, "responses": {"200": {"description": "Service information", "content": {"application/json": {"schema": {"type": "object"}}}}}}}
-    schema["paths"]["/api/station/{station_id}"] = {"get": {"tags": ["Charging companion"], "summary": "Read a station by stable source ID", "parameters": [{"in": "path", "name": "station_id", "required": True, "schema": {"type": "string"}, "description": "Open Charge Map numeric ID or fictional demo-1 through demo-8."}], "responses": {"200": {"description": "station, demo, retrieved_at"}, "404": error, "503": error}}}
+    schema["paths"]["/api/station/{station_id}"] = {"get": {"tags": ["Charging companion"], "summary": "Read a station by stable source ID", "parameters": [{"in": "path", "name": "station_id", "required": True, "schema": {"type": "string", "pattern": "^[1-9][0-9]{0,11}$"}, "description": "Positive Open Charge Map numeric ID."}], "responses": {"200": {"description": "station, retrieved_at"}, "400": error, "404": error, "503": error}}}
     app.openapi_schema = schema
     return schema
 

@@ -1,16 +1,15 @@
 /* Cache only this application's owned interface. Never cache API data or tiles. */
 "use strict";
-const VERSION = "current-shell-v1";
+const VERSION = "current-shell-v2";
 const ROOT = new URL("./", self.location.href);
 const CACHE_PREFIX = `current-shell-${encodeURIComponent(ROOT.pathname)}-`;
 const CACHE_NAME = CACHE_PREFIX + VERSION;
 let SHELL_ASSETS = [
   "./",
-  "./static/app.css",
-  "./static/app.js",
+  "./static/app.css?v=3",
+  "./static/app.js?v=3",
   "./static/ui.js",
   "./static/domain.js",
-  "./static/demo.json",
   "./static/explorer.js",
   "./static/explorer.css",
   "./static/icon.svg",
@@ -80,7 +79,7 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return;
   const url = new URL(request.url);
-  if (url.origin !== ROOT.origin || url.search) return;
+  if (url.origin !== ROOT.origin) return;
   const home =
     url.href === ROOT.href || url.href === new URL("./index.html", ROOT).href;
   if (request.mode === "navigate" && home) {
