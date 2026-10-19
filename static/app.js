@@ -311,9 +311,14 @@ function card(s) {
     : ["Unknown"]
   ).slice(0, 2))
     specs.append(el("span", connector, "connector-badge"));
-  specs.append(el("span", `${s.points ?? "—"} points`, "points-label"));
   const bottom = el("div", null, "card-bottom"),
-    details = button("", () => showDetail(s), "card-link");
+    actions = el("div", null, "card-actions"),
+    details = button("Details", () => showDetail(s), "card-link"),
+    directions = link(
+      "Directions",
+      `https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}`,
+      "card-directions",
+    );
   details.setAttribute("aria-label", `View details for ${s.name}`);
   const compare = button(
     "",
@@ -335,8 +340,9 @@ function card(s) {
     );
   favorite.setAttribute("aria-label", `${saved ? "Unsave" : "Save"} ${s.name}`);
   favorite.setAttribute("aria-pressed", saved);
-  bottom.append(status(s), compare, favorite);
-  article.append(details, top, specs);
+  actions.append(details, directions, compare, favorite);
+  bottom.append(status(s), actions);
+  article.append(top, specs);
   if (vehicle())
     article.append(
       el(

@@ -186,6 +186,7 @@ class WorkspaceTests(unittest.TestCase):
                 self.assertEqual(request["data"]["location_mode"], "zip")
                 self.assertEqual(request["data"]["zip_code"], "10036")
                 self.assertEqual(float(request["data"]["radius"]), 10)
+                page.locator("#filters-toggle").click()
                 with page.expect_response(lambda response: response.url == endpoint + "search" and response.request.method == "POST"):
                     page.locator('[name="radius"]').select_option("25")
                 expect(page.locator("#submit")).to_be_enabled()
