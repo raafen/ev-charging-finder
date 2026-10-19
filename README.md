@@ -60,18 +60,6 @@ Data comes from [Open Charge Map](https://openchargemap.org) and its providers u
 
 The API key is sent in the `X-API-Key` header. HTTP error messages do not expose request details or credentials. Flask escapes station text when rendering it. The local server binds to localhost with debug mode disabled.
 
-## Put it on GitHub
-
-Create an empty repository named `ev-charging-finder` in your GitHub account, then run from this folder:
-
-```bash
-git init
-git add .
-git commit -m "Build EV charging station finder"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/ev-charging-finder.git
-git push -u origin main
-```
 
 Before the commit, check `git status` and ensure no credentials are included. Replace YOUR_USERNAME with your account name. Add a screenshot after running the app with real data. No source-code license has been chosen yet; add one if you want to grant reuse rights.
 
