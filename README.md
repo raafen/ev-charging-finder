@@ -9,7 +9,7 @@ A calm, map-first charging companion built with Flask, a FastAPI documentation g
 
 ![Current desktop charging search workspace](docs/media/desktop.png)
 
-[Mobile screenshot](docs/media/mobile.png) · [Dark theme](docs/media/desktop-dark.png)
+[Mobile screenshot](docs/media/mobile.png) · [Dark theme](docs/media/desktop-dark.png) · [Short walkthrough](docs/media/demo.webm). Captured with real ZIP-search results; station data can change.
 
 The workspace starts with an empty station list. Enter a US ZIP code, use your location, or move the map and choose **Search this area** to request reported charging locations.
 
@@ -46,7 +46,6 @@ Open `http://127.0.0.1:8000`. Startup displays an empty search workspace and mak
 
 ```bash
 python cli.py --zip 10036 --radius 10
-python cli.py 40.758 -73.9855 --radius 10 --json
 ```
 
 ## Product and data-support matrix
@@ -117,7 +116,7 @@ python -m pip_audit -r requirements-dev.txt
 python scripts/build_pages.py --output site
 ```
 
-Python tests cover provider errors, cache/rate bounds, malformed data, privacy, ZIP/radius behavior, compatibility rules, charging assumptions and route calculations. Six browser scenarios target both Flask and a `/ev-charging-finder/` Pages export: empty onboarding, real-API request URLs, ZIP/location/radius searches, result filtering and clearing, failure preservation, station-detail save/compare actions, keyboard interaction, persistent themes and mobile search access. Provider responses in these tests are explicit test-only Playwright fixtures; no fixture records ship with the application. Third-party map resources intentionally fail so list/search behavior is exercised independently.
+Python tests cover provider errors, cache/rate bounds, malformed data, privacy, ZIP/radius behavior, compatibility rules, charging assumptions and route calculations. Seven browser scenarios target both Flask and a `/ev-charging-finder/` Pages export: empty onboarding, real-API request URLs, ZIP/location/radius searches, result filtering and clearing, failure preservation, station-detail save/compare actions, keyboard interaction, persistent themes, mobile search access and retirement of sample records without losing real saved stations. Provider responses in these tests are explicit test-only Playwright fixtures; no fixture records ship with the application. Third-party map resources intentionally fail so list/search behavior is exercised independently.
 
 ## Deployment
 

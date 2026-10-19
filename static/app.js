@@ -539,6 +539,7 @@ function initMap() {
     map.on("dragend", () => ($("#search-area").hidden = false));
     map.on("zoomend", updateMarkers);
     map.on("moveend", updateMarkers);
+    map.on("idle", updateMarkers);
     map.on("sourcedata", (e) => {
       if (e.sourceId === "stations") updateMarkers();
     });
@@ -704,7 +705,7 @@ function updateMarkers() {
   if (!map?.getSource("stations") || !map.isSourceLoaded("stations")) return;
   markers.forEach((m) => m.remove());
   markers = [];
-  const features = map.querySourceFeatures("stations"),
+  const features = map.queryRenderedFeatures({ layers: ["station-source-loader"] }),
     seen = new Set();
   for (const feature of features) {
     const p = feature.properties,
