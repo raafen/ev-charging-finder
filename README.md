@@ -88,3 +88,7 @@ After running and understanding it, you can describe the implemented Python/API 
 Choose **US ZIP code** from **Search using**, enter a five-digit ZIP (including leading zeros), and set a radius in miles. Coordinates remain available through the same dropdown. All search radii and result distances, including CLI JSON (`distance_miles`), use miles. The maximum radius is 100 miles.
 
 ZIP lookup uses [Zippopotam.us](https://zippopotam.us/) (GeoNames data) to get an approximate center, not your exact location. It requires internet but no additional API key. A submitted ZIP is sent to that service; only the resolved coordinates go to Open Charge Map. Offline demo supports ZIP 10036 without internet. Unsupported/not-found ZIPs and lookup failures display an error; coordinates can be used as a fallback.
+
+## Map workspace
+
+The responsive map interface includes a scrolling station sidebar, ZIP/coordinate search without page reloads, power and connector filters, reported operational status, station details, directions, dark mode, and a mobile expandable sheet. Leaflet 1.9.4 loads from unpkg; basemap tiles come from OpenStreetMap and require internet. Station results remain usable if the map library fails to load. Map tiles use the standard OpenStreetMap service; review its tile usage policy before scaling public traffic. Location is requested only after pressing the locate button. Live availability and amenities are not fabricated. API keys remain server-side.
