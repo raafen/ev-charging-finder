@@ -43,6 +43,8 @@ const savedZipSearches = load("searches", [])
     radius: s.radius || 10,
     saved_at: s.saved_at,
   }));
+const savedStops = load("trip-stops", []).filter(isSourceStation);
+const savedRoute = load("trip-route", null);
 const state = {
   stations: (boot.stations || []).filter(isSourceStation),
   filtered: [],
@@ -65,10 +67,15 @@ const state = {
   searches: savedZipSearches,
   preferred: load("networks", []),
   comparison: [],
-  tripStops: [],
-  route: null,
+  tripStops: savedStops,
+  route: savedRoute && Number.isFinite(savedRoute.distance_miles) && Number.isFinite(savedRoute.duration_minutes) ? savedRoute : null,
   fly: load("fly", false),
 };
+
+function persistTrip() {
+  save("trip-stops", state.tripStops);
+  save("trip-route", state.route);
+}
 let map,
   markers = [],
   requestNumber = 0,
@@ -1176,6 +1183,7 @@ function showDetail(s) {
       () => {
         if (!state.tripStops.some((x) => x.id === s.id))
           state.tripStops.push(s);
+        persistTrip();
         toast("Added to your trip on this device.");
       },
       "secondary",
@@ -2088,6 +2096,7 @@ function openTrip() {
             () => {
               if (!state.tripStops.some((x) => x.id === s.id))
                 state.tripStops.push(s);
+              persistTrip();
               renderTimeline();
             },
             "text-button",
@@ -2134,6 +2143,7 @@ function openTrip() {
           "Remove stop",
           () => {
             state.tripStops.splice(i, 1);
+            persistTrip();
             renderTimeline();
           },
           "text-button",
@@ -2173,6 +2183,7 @@ function openTrip() {
         include_stations: true,
         vehicle: vehicle() || {},
       });
+      persistTrip();
       state.stations = state.route.stations;
       updateNetworkOptions();
       render();

@@ -286,6 +286,7 @@ class WorkspaceTests(unittest.TestCase):
                 self.search_zip(page, endpoint)
                 page.locator('[data-station="901001"] .card-link').click()
                 expect(page.locator("#detail")).to_contain_text("Test Riverside Charging")
+                page.get_by_role("button", name="Add to trip").click()
                 page.get_by_role("button", name="Save", exact=True).click()
                 expect(page.get_by_role("button", name="Save", exact=True)).to_have_attribute("aria-pressed", "true")
                 page.get_by_role("button", name="Compare", exact=True).click()
@@ -301,6 +302,8 @@ class WorkspaceTests(unittest.TestCase):
                 page.locator("#favorites-nav").click()
                 expect(page.locator("#results .station-card")).to_have_count(1)
                 expect(page.locator('[data-station="901001"]')).to_contain_text("Test Riverside Charging")
+                page.locator("#trip-nav").click()
+                expect(page.locator("#modal-body")).to_contain_text("Test Riverside Charging")
 
 
     def test_drive_mode_stays_passenger_focused_without_vehicle_telemetry(self):

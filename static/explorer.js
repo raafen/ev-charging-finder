@@ -635,7 +635,7 @@ export async function mountExplorer(container) {
         "Separated-parts schematic: outer grip, insulating body and contact face are spaced apart to explain their roles. This is not an actual assembly sequence or repair guide. Comparison is available in Connector face mode.",
       port: "Generic inlet → optional adapter → connector. This diagram does not assert any adapter is compatible. Check vehicle approval, AC/DC support, charging-network rules, adapter ratings and manufacturer instructions. Never force a connection.",
       scene:
-        "A generic charging introduction: park safely, follow station instructions, connect a compatible cable, authorize if required, then start charging. At the end, stop the session and unlock as directed before unplugging. No live charging session is represented.",
+        "A generic charging introduction, not a station model: no stall-level availability, pricing, wait time, or live charging session is represented. Follow posted site instructions and confirm access and compatibility.",
     }[state.mode];
     explain();
     buildModel();
