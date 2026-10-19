@@ -1,1 +1,30 @@
-
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>EV Charging Finder</title>
+<style>body{font:16px system-ui;background:#f1f5f3;color:#18342c;margin:0}main{max-width:850px;margin:50px auto;padding:24px}h1{font-size:40px;margin-bottom:8px}form,article{background:white;padding:24px;border-radius:14px;margin:20px 0}fieldset{border:0;padding:0;display:flex;gap:16px;flex-wrap:wrap}label{display:block;margin:10px 0}input[type=number],input[type=text],select{display:block;padding:10px;width:140px;border:1px solid #aac0b6;border-radius:6px}button{background:#176848;color:white;border:0;border-radius:7px;padding:12px 22px;cursor:pointer}a{color:#176848}.error{color:#a52323}.muted{color:#53675f}article h3{margin-top:0}</style></head>
+<body><main><h1>Find your next charge.</h1><p>Search nearby EV charging stations by US ZIP code or coordinates.</p>
+<form method="post">
+<label>Search using <select name="location_mode" id="location-mode"><option value="coordinates" {% if values.location_mode == 'coordinates' %}selected{% endif %}>Latitude / longitude</option><option value="zip" {% if values.location_mode == 'zip' %}selected{% endif %}>US ZIP code</option></select></label>
+<div id="zip-fields"><label>US ZIP code<input type="text" name="zip_code" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="10036" value="{{values.zip_code}}"></label><p class="muted">Searches from the approximate ZIP center. ZIP lookup uses Zippopotam.us. Offline demo ZIP: 10036.</p></div>
+<fieldset>{% for key, label in [('latitude','Latitude'),('longitude','Longitude'),('radius','Radius (miles)'),('limit','Max results')] %}<label>{{label}}<input {% if key in ['radius', 'limit'] %}required{% endif %} type="number" step="{{ '1' if key == 'limit' else 'any' }}" name="{{key}}" value="{{values[key]}}"></label>{% endfor %}</fieldset>
+<label><input type="checkbox" name="operational" {% if operational %}checked{% endif %}> Reported operational stations only</label>
+<label><input type="checkbox" name="demo" {% if demo %}checked{% endif %}> Offline demo (fictional stations near Times Square)</label><button>Find stations</button></form>
+<p class="muted">Distances are straight-line estimates. Operational status does not indicate whether a plug is occupied or available in real time.</p>
+{% if error %}<p role="alert" class="error">{{error}}</p>{% endif %}
+{% if location %}<p>Searching near {{location}} (approximate ZIP center).</p>{% endif %}
+{% if stations is not none %}<h2>{{stations|length}} station(s) found{% if demo %} · DEMO{% endif %}</h2>{% for s in stations %}<article><h3>{{s.name}}</h3><p>{{s.address}}</p><p><strong>{{'%.2f'|format(s.distance_miles)}} miles</strong> · {{s.status}} · Charging points: {{s.points if s.points is not none else 'Unknown'}}</p><a href="{{s.source_url}}" target="_blank" rel="noopener noreferrer">View source on Open Charge Map</a><p class="muted">Provider: {{s.provider}} · {{s.license}}</p></article>{% else %}<p>Try a wider radius or disable the operational filter.</p>{% endfor %}{% endif %}
+<footer>Station data: <a href="https://openchargemap.org">Open Charge Map</a> and its data providers. Demo records are fictional.</footer></main><script>
+const mode = document.getElementById('location-mode');
+function updateLocationFields() {
+  const zipMode = mode.value === 'zip';
+  document.getElementById('zip-fields').hidden = !zipMode;
+  const zip = document.querySelector('[name="zip_code"]');
+  zip.disabled = !zipMode; zip.required = zipMode;
+  for (const name of ['latitude', 'longitude']) {
+    const field = document.querySelector('[name="' + name + '"]');
+    field.disabled = zipMode; field.required = !zipMode;
+    field.parentElement.hidden = zipMode;
+  }
+}
+mode.addEventListener('change', updateLocationFields);
+updateLocationFields();
+</script></body></html>
