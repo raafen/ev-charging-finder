@@ -3,9 +3,9 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 import requests
-from app import app, limiter, RateLimiter
-from finder import normalize, route_search, get_station
-from providers import FinderError, TTLCache, request_json, OSRMProvider, OpenChargeMapProvider, station_cache, reference_cache, zip_cache
+from ev_charging_finder.app import app, limiter, RateLimiter
+from ev_charging_finder.finder import normalize, route_search, get_station
+from ev_charging_finder.providers import FinderError, TTLCache, request_json, OSRMProvider, OpenChargeMapProvider, station_cache, reference_cache, zip_cache
 
 
 class CacheTests(unittest.TestCase):
@@ -52,8 +52,8 @@ class ProviderTests(unittest.TestCase):
         limiter.entries.clear()
         self.client = app.test_client()
 
-    @patch("providers.time.sleep")
-    @patch("providers.requests.get")
+    @patch("ev_charging_finder.providers.time.sleep")
+    @patch("ev_charging_finder.providers.requests.get")
     def test_transient_retry_only(self, get, sleep):
         get.side_effect = [Mock(status_code=503), Mock(status_code=200, json=Mock(return_value=[]))]
         self.assertEqual(request_json("https://example.invalid"), [])
@@ -94,7 +94,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(station["max_power_kw"], 150)
         self.assertEqual(station["availability"], "unknown")
 
-    @patch("providers.request_json")
+    @patch("ev_charging_finder.providers.request_json")
     def test_reference_cache(self, fetch):
         fetch.return_value = {"ConnectionTypes": []}
         provider = OpenChargeMapProvider("test-key")
@@ -127,7 +127,7 @@ class ProviderTests(unittest.TestCase):
                 self.assertIn("request_id", response.json)
         for station_id in ("demo-1", "demo-999", "0", "-1", "abc"):
             self.assertEqual(self.client.get(f"/api/station/{station_id}").status_code, 400)
-        with patch("finder.OpenChargeMapProvider") as factory:
+        with patch("ev_charging_finder.finder.OpenChargeMapProvider") as factory:
             factory.return_value.station.return_value = {"ID": 123, "AddressInfo": {"Title": "Test record", "Latitude": 0, "Longitude": 0}}
             response = self.client.get("/api/station/123")
         self.assertEqual(response.status_code, 200)
@@ -135,7 +135,7 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn("demo", response.json)
         self.assertNotIn("fictional", response.json["station"])
 
-    @patch("finder.OpenChargeMapProvider")
+    @patch("ev_charging_finder.finder.OpenChargeMapProvider")
     def test_internal_location_search_real_empty_and_upstream_error(self, factory):
         provider = factory.return_value
         provider.search.return_value = [{"ID": 1, "AddressInfo": {"Title": "Test record", "Latitude": 0, "Longitude": 0}}]
@@ -219,8 +219,8 @@ class RouteTests(unittest.TestCase):
         response = self.client.post("/api/route", json={"origin": [40, -73], "destination": [41, -74], "range_miles": 20, "reserve_miles": 20})
         self.assertEqual(response.status_code, 400)
 
-    @patch("finder.lookup_zip")
-    @patch("finder.OSRMProvider")
+    @patch("ev_charging_finder.finder.lookup_zip")
+    @patch("ev_charging_finder.finder.OSRMProvider")
     def test_route_zip_locations_resolved_server_side(self, factory, lookup):
         lookup.side_effect = [(40, -73, "Departure"), (41, -74, "Destination")]
         factory.return_value.route.return_value = {"distance_miles": 90, "duration_minutes": 100}
@@ -234,7 +234,7 @@ class RouteTests(unittest.TestCase):
         for data in ({"demo": True}, {"demo": False}, {"origin_zip": "01001", "origin": [0, 0]}, {"origin_zip": "bad", "destination_zip": "10036"}):
             self.assertEqual(self.client.post("/api/route", json=data).status_code, 400)
 
-    @patch("providers.request_json")
+    @patch("ev_charging_finder.providers.request_json")
     def test_osrm_coordinates_units_and_provider_errors(self, fetch):
         fetch.return_value = {"code": "Ok", "routes": [{"distance": 1609.344, "duration": 120, "geometry": {"type": "LineString", "coordinates": [[-73, 40], [-74, 41]]}}]}
         provider = OSRMProvider("https://router.invalid")
@@ -251,7 +251,7 @@ class RouteTests(unittest.TestCase):
             provider.route([[40, -73], [41, -74]])
         self.assertEqual(caught.exception.status, 502)
 
-    @patch("finder.search")
+    @patch("ev_charging_finder.finder.search")
     def test_detours_and_stop_legs_use_provider_not_aerial_distance(self, search):
         search.return_value = [{"id": 1, "latitude": 0, "longitude": .5, "operational": True, "connections": [{"connector": "CCS1", "current_type": "DC"}]}]
         class RouteProvider:
@@ -271,7 +271,7 @@ class RouteTests(unittest.TestCase):
         self.assertFalse(result["coverage"]["complete"])
         self.assertGreaterEqual(len(provider.calls), 5)
 
-    @patch("finder.OSRMProvider")
+    @patch("ev_charging_finder.finder.OSRMProvider")
     def test_route_provider_error_status_propagates(self, factory):
         factory.return_value.route.side_effect = FinderError("Routing provider timed out.", 504)
         response = self.client.post("/api/route", json={"origin": [0, 0], "destination": [0, 1]})

@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
-from main import app
-from app import limiter
+from ev_charging_finder.main import app
+from ev_charging_finder.app import limiter
 
 
 class DocumentedAPITests(unittest.TestCase):
@@ -11,8 +11,8 @@ class DocumentedAPITests(unittest.TestCase):
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
 
-    @patch("app.lookup_zip", return_value=(42.06, -72.61, "01001 — Agawam, MA"))
-    @patch("finder.OpenChargeMapProvider")
+    @patch("ev_charging_finder.app.lookup_zip", return_value=(42.06, -72.61, "01001 — Agawam, MA"))
+    @patch("ev_charging_finder.finder.OpenChargeMapProvider")
     def test_openapi_search_executes_against_mounted_backend(self, factory, lookup):
         factory.return_value.search.return_value = [{"ID": 1, "AddressInfo": {"Title": "Test record", "Latitude": 42.06, "Longitude": -72.61}}]
         schema = self.client.get('/openapi.json').json()

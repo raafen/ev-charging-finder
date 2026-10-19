@@ -13,4 +13,4 @@ dependencies = [
 ]
 
 [tool.vercel]
-entrypoint = "main:app"
+entrypoint = "ev_charging_finder.main:app"

@@ -141,7 +141,7 @@ class OSRMProvider:
             if data.get("code") != "Ok":
                 raise FinderError("No driving route was found for these locations.", 422)
             route = data["routes"][0]
-            from domain import finite_number
+            from .domain import finite_number
             distance = finite_number(route["distance"], "route distance")
             duration = finite_number(route["duration"], "route duration")
             geometry = route["geometry"]
@@ -150,7 +150,7 @@ class OSRMProvider:
             for point in geometry["coordinates"]:
                 if not isinstance(point, list) or len(point) < 2:
                     raise ValueError("Invalid geometry coordinate")
-                from finder import validate
+                from .finder import validate
                 validate(float(point[1]), float(point[0]), 1, 1)
             return {"distance_miles": distance / 1609.344, "duration_minutes": duration / 60, "geometry": geometry, "provider": "OSRM", "traffic": False}
         except FinderError:

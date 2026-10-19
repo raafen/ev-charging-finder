@@ -16,7 +16,7 @@ from werkzeug.serving import make_server
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from app import app
+from ev_charging_finder.app import app
 from scripts.build_pages import build, DEFAULT_API_BASE
 
 
@@ -54,7 +54,7 @@ class WorkspaceTests(unittest.TestCase):
         cls.flask = make_server("127.0.0.1", 0, app, threaded=True)
         # Only capability metadata is patched server-side. Station/search responses
         # are supplied exclusively by the per-context Playwright route below.
-        capabilities = patch("app.public_config", return_value={
+        capabilities = patch("ev_charging_finder.app.public_config", return_value={
             "mode": "server", "live_search": True, "routing": False,
             "vehicle_provider": "manual", "availability": False,
         })

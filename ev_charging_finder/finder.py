@@ -2,8 +2,8 @@
 import math
 import re
 import requests  # Kept as the shared HTTP module for CLI consumers and patchable transports.
-from domain import connector_name, finite_number
-from providers import FinderError, OpenChargeMapProvider, OSRMProvider, request_json, zip_cache
+from .domain import connector_name, finite_number
+from .providers import FinderError, OpenChargeMapProvider, OSRMProvider, request_json, zip_cache
 
 API_URL = OpenChargeMapProvider.API_URL
 
@@ -243,7 +243,7 @@ def route_search(data, provider=None):
                 "detour_miles": max(0, before["distance_miles"] + after["distance_miles"] - route["distance_miles"]),
                 "detour_minutes": max(0, before["duration_minutes"] + after["duration_minutes"] - route["duration_minutes"])}
             if isinstance(data.get("vehicle"), dict):
-                from domain import compatibility
+                from .domain import compatibility
                 station["compatibility"] = compatibility(data["vehicle"], station)
             route["stations"].append(station)
         except FinderError:

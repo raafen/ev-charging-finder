@@ -1,5 +1,5 @@
 import unittest
-from domain import compatibility, connector_name, estimate, ManualVehicleProvider
+from ev_charging_finder.domain import compatibility, connector_name, estimate, ManualVehicleProvider
 
 
 class DomainTests(unittest.TestCase):

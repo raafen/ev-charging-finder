@@ -8,10 +8,10 @@ import time
 import uuid
 from flask import Flask, render_template, request, jsonify, g, send_from_directory
 from werkzeug.exceptions import HTTPException
-from domain import compatibility, estimate
-from finder import FinderError, search, lookup_zip, validate, get_station, route_search
+from .domain import compatibility, estimate
+from .finder import FinderError, search, lookup_zip, validate, get_station, route_search
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.config["MAX_CONTENT_LENGTH"] = 65536
 
 

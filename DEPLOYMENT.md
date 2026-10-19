@@ -6,7 +6,7 @@ Production: **https://ev-charging-finder-nine.vercel.app**
 Swagger: **https://ev-charging-finder-nine.vercel.app/docs**  
 ReDoc: **https://ev-charging-finder-nine.vercel.app/redoc**
 
-The Vercel Git integration is connected to `raafen/ev-charging-finder`. Pushes to `main` deploy production. `pyproject.toml` selects `main:app`; `vercel.json` selects FastAPI, builds static CDN assets and sets a 60-second function duration. Flask continues serving the web shell and API beneath the FastAPI ASGI documentation gateway. Vercel serves the copied `public/static/` assets directly.
+The Vercel Git integration is connected to `raafen/ev-charging-finder`. Pushes to `main` deploy production. `pyproject.toml` selects `ev_charging_finder.main:app`; `vercel.json` selects that package entrypoint, builds static CDN assets and sets a 60-second function duration. Flask continues serving the web shell and API beneath the FastAPI ASGI documentation gateway. Vercel serves the copied `public/static/` assets directly.
 
 ```bash
 vercel link --project ev-charging-finder

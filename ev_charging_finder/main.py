@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel, Field
 from a2wsgi import WSGIMiddleware
-from app import app as flask_app
+from .app import app as flask_app
 
 
 class SearchRequest(BaseModel):

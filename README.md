@@ -38,7 +38,7 @@ Python 3.12–3.14:
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log
+uvicorn ev_charging_finder.main:app --host 127.0.0.1 --port 8000 --no-access-log
 ```
 
 Open `http://127.0.0.1:8000`. Startup displays an empty search workspace and makes no station-provider request. Searches require a server-side `OCM_API_KEY`; without it, the app explains that live search is unavailable rather than substituting records.
@@ -46,7 +46,7 @@ Open `http://127.0.0.1:8000`. Startup displays an empty search workspace and mak
 [Obtain an Open Charge Map key](https://openchargemap.org/develop/api) and set `OCM_API_KEY` in the server environment. It is sent upstream only in the `X-API-Key` header, never to the browser. Environment files are not automatically loaded by Python.
 
 ```bash
-python cli.py --zip 10036 --radius 10
+python -m ev_charging_finder.cli --zip 10036 --radius 10
 ```
 
 ## Product and data-support matrix
@@ -67,11 +67,11 @@ python cli.py --zip 10036 --radius 10
 
 ## Architecture and data flow
 
-- `main.py`: FastAPI ASGI entrypoint. Hosts `/docs`, `/redoc` and `/openapi.json`; mounts the existing Flask application with `a2wsgi`. Pydantic models document the real mounted endpoints. Flask remains the single route implementation and validates input; this is not a duplicated API.
-- `app.py`: HTML form fallback, JSON endpoints, capability configuration, request IDs, bounded rate limiting and privacy-conscious request logs.
-- `finder.py`: input validation, normalized public station schema, distance calculation and route-corridor/stop calculations.
-- `providers.py`: Open Charge Map / OSRM interfaces, timeout/retry policy and thread-safe bounded caches. Raw upstream records remain server-side.
-- `domain.py`: connector normalization, manual vehicle interface, physical/network compatibility and constant-power estimates.
+- `ev_charging_finder/main.py`: FastAPI ASGI entrypoint. Hosts `/docs`, `/redoc` and `/openapi.json`; mounts the existing Flask application with `a2wsgi`. Pydantic models document the real mounted endpoints. Flask remains the single route implementation and validates input; this is not a duplicated API.
+- `ev_charging_finder/app.py`: HTML form fallback, JSON endpoints, capability configuration, request IDs, bounded rate limiting and privacy-conscious request logs.
+- `ev_charging_finder/finder.py`: input validation, normalized public station schema, distance calculation and route-corridor/stop calculations.
+- `ev_charging_finder/providers.py`: Open Charge Map / OSRM interfaces, timeout/retry policy and thread-safe bounded caches. Raw upstream records remain server-side.
+- `ev_charging_finder/domain.py`: connector normalization, manual vehicle interface, physical/network compatibility and constant-power estimates.
 - `static/app.js` / `domain.js`: framework-free UI and local-first calculations. Browser preferences stay on-device. Vercel/local search uses the same-origin server API; Pages calls the configured live Vercel backend through origin-restricted CORS.
 - `static/ui.js`: shared DOM, safe external links, native form fields and semantic fieldset primitives; no application state or charging rules.
 - `static/explorer.js`: lazy connector studio. No Three.js or model dependency on the main search path.

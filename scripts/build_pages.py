@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from flask import render_template
-from app import app
+from ev_charging_finder.app import app
 
 
 ASSET_SUFFIXES = {".css", ".js", ".json", ".svg", ".webmanifest", ".png", ".jpg", ".webp", ".woff2"}

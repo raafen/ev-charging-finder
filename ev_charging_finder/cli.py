@@ -1,7 +1,7 @@
-"""Example: python cli.py --zip 10036"""
+"""Example: python -m ev_charging_finder.cli --zip 10036"""
 import argparse
 import json
-from finder import FinderError, search, lookup_zip
+from .finder import FinderError, search, lookup_zip
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Find nearby EV charging stations.")

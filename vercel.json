@@ -3,7 +3,7 @@
   "framework": "fastapi",
   "buildCommand": "python scripts/build_vercel.py",
   "functions": {
-    "main.py": { "maxDuration": 60 }
+    "ev_charging_finder/main.py": { "maxDuration": 60 }
   },
   "headers": [
     { "source": "/sw.js", "headers": [
