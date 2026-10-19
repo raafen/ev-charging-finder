@@ -18,8 +18,8 @@ The workspace starts with an empty station list. Enter a US ZIP code, use your l
 Current uses a neutral, map-first interface rather than a dashboard or landing page:
 
 - A compact wordmark and text navigation; no decorative hero, avatars, network monograms or promotional cards.
-- One primary ZIP search, a visible **Use my location** action and an always-accessible radius control. There is no manual latitude/longitude entry; connector/network/compatibility controls sit under **Filters**.
-- Directly selectable station rows, separated by dividers. Power, connector, distance and reported status have a consistent hierarchy; saving and comparison remain independent actions.
+- One primary US ZIP search and a visible **Use my location** action. Search radius and technical connector/network/compatibility controls are disclosed under **All filters**. There is no manual latitude/longitude entry.
+- Station cards prioritize name, reported distance, power and connector, with direct **Details** and **Directions** actions; reported operating status stays explicitly non-live.
 - Mobile search stays accessible above the map. The station sheet has a keyboard/touch expansion control, integrated list switching and safe-area-aware navigation. Selected pins are kept clear of the sheet.
 - Garage, charging estimates, network/station comparisons, trip planning and the passenger-focused Drive Mode share form, typography and control conventions. Drive Mode is a trip overview for passengers; in-car navigation remains the source for turn-by-turn guidance.
 - Garage manufacturer entry offers searchable native dropdown suggestions for common EV brands, while accepting custom manufacturers and preserving saved-profile editing. Suggestions do not supply or verify charging specifications.
