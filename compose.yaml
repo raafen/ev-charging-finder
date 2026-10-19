@@ -1,0 +1,20 @@
+services:
+  web:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      OCM_API_KEY: ${OCM_API_KEY:-}
+      ROUTING_BASE_URL: ${ROUTING_BASE_URL:-}
+      MAP_TERRAIN_URL: ${MAP_TERRAIN_URL:-}
+      MAP_SATELLITE_URL: ${MAP_SATELLITE_URL:-}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

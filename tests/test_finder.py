@@ -3,16 +3,26 @@ from unittest.mock import patch, Mock
 import requests
 from finder import search, distance_km, FinderError, lookup_zip, normalize
 from app import app
+from providers import station_cache, reference_cache, zip_cache
+from app import limiter
 
 class FinderTests(unittest.TestCase):
+    def setUp(self):
+        station_cache.clear()
+        reference_cache.clear()
+        zip_cache.clear()
+        limiter.entries.clear()
+
     def test_distance(self):
         self.assertAlmostEqual(distance_km(0, 0, 0, 1), 111.195, places=2)
 
     def test_demo_sort_and_filter(self):
         stations = search(40.758, -73.9855, demo=True)
-        self.assertEqual(len(stations), 2)
-        self.assertLess(stations[0]['distance_miles'], stations[1]['distance_miles'])
-        self.assertEqual(len(search(40.758, -73.9855, demo=True, operational_only=True)), 1)
+        self.assertEqual(len(stations), 8)
+        self.assertEqual([s["distance_miles"] for s in stations], sorted(s["distance_miles"] for s in stations))
+        self.assertEqual(len({s["id"] for s in stations}), 8)
+        self.assertTrue(all(s["fictional"] for s in stations))
+        self.assertEqual(len(search(40.758, -73.9855, demo=True, operational_only=True)), 6)
         self.assertEqual(search(0, 0, demo=True), [])
 
     def test_validation(self):

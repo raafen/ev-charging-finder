@@ -3,3 +3,11 @@ __pycache__/
 *.py[cod]
 .env
 .DS_Store
+.vercel
+.env*
+!.env.example
+site/
+public/
+node_modules/
+test-results/
+playwright-report/
