@@ -1374,11 +1374,27 @@ function openGarage(editId) {
       "Required so you can review the origin and age of your manual entries.",
     ),
     sourceGrid = el("div", null, "form-grid");
-  inputField(grid, "Make", "make", editing?.make || "", "text", {
+  const manufacturer = inputField(grid, "Manufacturer", "make", editing?.make || "", "text", {
     required: true,
     maxLength: 60,
-    placeholder: "e.g. Hyundai",
+    placeholder: "Choose or search a manufacturer",
+    autocomplete: "off",
   });
+  const manufacturers = el("datalist");
+  manufacturers.id = "vehicle-manufacturers";
+  for (const make of [
+    "Acura", "Audi", "BMW", "Cadillac", "Chevrolet", "FIAT", "Ford",
+    "Genesis", "GMC", "Honda", "Hyundai", "Jaguar", "Kia", "Lexus",
+    "Lucid", "Mazda", "Mercedes-Benz", "MINI", "Mitsubishi", "Nissan",
+    "Polestar", "Porsche", "Rivian", "Subaru", "Tesla", "Toyota",
+    "VinFast", "Volkswagen", "Volvo",
+  ]) manufacturers.append(new Option(make, make));
+  manufacturer.setAttribute("list", manufacturers.id);
+  manufacturer.setAttribute("aria-describedby", "manufacturer-help");
+  grid.append(manufacturers);
+  const manufacturerHelp = el("p", "Choose a suggestion or type another manufacturer.", "assumptions");
+  manufacturerHelp.id = "manufacturer-help";
+  details.append(manufacturerHelp);
   inputField(grid, "Model", "model", editing?.model || "", "text", {
     required: true,
     maxLength: 60,

@@ -22,6 +22,7 @@ Current uses a neutral, map-first interface rather than a dashboard or landing p
 - Directly selectable station rows, separated by dividers. Power, connector, distance and reported status have a consistent hierarchy; saving and comparison remain independent actions.
 - Mobile search stays accessible above the map. The station sheet has a keyboard/touch expansion control, integrated list switching and safe-area-aware navigation. Selected pins are kept clear of the sheet.
 - Garage, charging estimates, network/station comparisons, trip planning and the connector guide share form, typography and control conventions. Source/freshness detail expands without hiding essential availability warnings.
+- Garage manufacturer entry offers searchable native dropdown suggestions for common EV brands, while accepting custom manufacturers and preserving saved-profile editing. Suggestions do not supply or verify charging specifications.
 - `static/app.css` centralizes color, geometry, spacing and motion tokens. `static/ui.js` supplies shared semantic DOM, form and action primitives. No new UI framework or runtime dependency was added.
 
 The palette centers on `#F8F9F8`, `#181A19` and white surfaces, with `#B8F26B` reserved for primary actions and charging indicators. Small secondary text uses `#606562` instead of the lighter reference gray to retain AA contrast. Typography uses installed Inter or the platform system sans-serif—no remotely loaded font dependency. Standard transitions are 180–250 ms and respect reduced motion.

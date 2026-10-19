@@ -6,8 +6,8 @@ const CACHE_PREFIX = `current-shell-${encodeURIComponent(ROOT.pathname)}-`;
 const CACHE_NAME = CACHE_PREFIX + VERSION;
 let SHELL_ASSETS = [
   "./",
-  "./static/app.css?v=3",
-  "./static/app.js?v=3",
+  "./static/app.css?v=4",
+  "./static/app.js?v=4",
   "./static/ui.js",
   "./static/domain.js",
   "./static/explorer.js",
