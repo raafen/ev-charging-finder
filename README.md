@@ -9,7 +9,7 @@ A calm, map-first charging companion built with Flask, a FastAPI documentation g
 
 ![Current desktop workspace with fictional Manhattan charging stations](docs/media/desktop.png)
 
-[Mobile screenshot](docs/media/mobile.png) · [Short production demo video](docs/media/demo.webm)
+[Mobile screenshot](docs/media/mobile.png) · [Dark theme](docs/media/desktop-dark.png) · [Short production demo video](docs/media/demo.webm)
 
 Captured from the deployed application. The video demonstrates filtering, station details, the connector lab and theme switching; all shown stations are fictional.
 
