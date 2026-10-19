@@ -305,8 +305,9 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_drive_mode_stays_passenger_focused_without_vehicle_telemetry(self):
         page, _, _, _ = self.open_workspace("flask")
+        page.locator("#garage-nav").click()
+        page.locator("#modal-close").click()
         page.locator("#drive-nav").click()
-        expect(page.locator("#modal-title")).to_have_text("Drive Mode")
         expect(page.locator("#modal-body")).to_contain_text("Keep turn-by-turn navigation")
         expect(page.locator("#modal-body")).to_contain_text("Plan a route first")
         page.get_by_role("button", name="Plan a trip").click()

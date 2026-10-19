@@ -136,8 +136,8 @@ function openModal(title) {
       ? "trip-nav"
       : title === "Drive Mode"
         ? "drive-nav"
-        : title === "Connectors"
-          ? "explore-nav"
+        : title === "My garage"
+          ? "garage-nav"
           : "explore-nav",
   );
   $("#modal").scrollTop = 0;
