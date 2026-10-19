@@ -1,4 +1,13 @@
 import {
+  el,
+  icon,
+  button,
+  link,
+  inputField,
+  selectField,
+  formSection,
+} from "./ui.js";
+import {
   CONNECTORS,
   CONNECTOR_LABELS,
   compatibility,
@@ -55,42 +64,6 @@ let map,
   mapFailed = false,
   shellCache = null;
 const vehicle = () => state.vehicles.find((v) => v.id === state.activeVehicle);
-function el(tag, text, cls) {
-  const node = document.createElement(tag);
-  if (text != null) node.textContent = text;
-  if (cls) node.className = cls;
-  return node;
-}
-function icon(name) {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", "icon");
-  svg.setAttribute("aria-hidden", "true");
-  const use = document.createElementNS(svg.namespaceURI, "use");
-  use.setAttribute("href", `#i-${name}`);
-  svg.append(use);
-  return svg;
-}
-function button(text, fn, cls = "secondary", symbol) {
-  const b = el("button", null, cls);
-  b.type = "button";
-  if (symbol) b.append(icon(symbol));
-  if (text) b.append(document.createTextNode(text));
-  b.onclick = fn;
-  return b;
-}
-function link(text, href, cls = "") {
-  const a = el("a", text, cls);
-  try {
-    const u = new URL(href, location.href);
-    if (!["https:", "http:"].includes(u.protocol)) return el("span", text);
-    a.href = u.href;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-  } catch {
-    return el("span", text);
-  }
-  return a;
-}
 function toast(text) {
   clearTimeout(toastTimer);
   $("#toast").textContent = text;
@@ -128,11 +101,27 @@ const dateLabel = (value) => {
         day: "numeric",
       });
 };
+function setNavigation(id = "explore-nav") {
+  for (const nav of $$(".nav-link")) {
+    const active = nav.id === id;
+    nav.classList.toggle("active", active);
+    if (active) nav.setAttribute("aria-current", "page");
+    else nav.removeAttribute("aria-current");
+  }
+}
 function openModal(title) {
   explorerCleanup?.();
   explorerCleanup = null;
   modalEpoch++;
   $("#modal-title").textContent = title;
+  setNavigation(
+    title === "Plan a trip"
+      ? "trip-nav"
+      : title === "Connectors"
+        ? "learn-nav"
+        : "explore-nav",
+  );
+  $("#modal").scrollTop = 0;
   $("#modal-body").replaceChildren();
   if (!$("#modal").open) $("#modal").showModal();
   return $("#modal-body");
@@ -141,6 +130,7 @@ function closeModal() {
   explorerCleanup?.();
   explorerCleanup = null;
   modalEpoch++;
+  setNavigation();
   $("#modal").close();
 }
 $("#modal-close").onclick = closeModal;
@@ -148,6 +138,7 @@ $("#modal").addEventListener("cancel", () => {
   explorerCleanup?.();
   explorerCleanup = null;
   modalEpoch++;
+  setNavigation();
 });
 $("#modal").addEventListener("click", (e) => {
   if (e.target === $("#modal")) {
@@ -183,15 +174,24 @@ function updateMode() {
     $(`[name=${key}]`).required = !zip;
   }
   $(".search-input").hidden = !zip;
+  if (!zip) $("#search-settings").open = true;
+  updateSearchScope();
 }
 $("#location-mode").onchange = updateMode;
 updateMode();
+function updateSearchScope() {
+  $("#search-scope").textContent =
+    `${$("[name=radius]").value} mi · ${$("[name=demo]").checked ? "Demo" : "Live"}`;
+}
+for (const selector of ["[name=radius]", "[name=demo]"])
+  $(selector).addEventListener("change", updateSearchScope);
 if (config.mode === "static") {
   $("[name=demo]").disabled = true;
   $("#connection-mode").textContent = "GitHub Pages · offline demo";
 } else if (!config.live_search)
   $("#connection-mode").textContent = "Live provider not configured";
 $("[name=demo]").checked = state.demo;
+updateSearchScope();
 function filterStations() {
   const power = $("#power").getAttribute("aria-pressed") === "true",
     operational = $("#operational").getAttribute("aria-pressed") === "true",
@@ -238,6 +238,11 @@ function filterStations() {
   ].filter(Boolean).length;
   $("#filter-count").hidden = !count;
   $("#filter-count").textContent = count;
+  $("#quick-reset").hidden = !count;
+  $("#favorites-nav").setAttribute(
+    "aria-pressed",
+    $("#favorites-only").checked,
+  );
 }
 function toggleFavorite(s) {
   const found = state.favorites.findIndex((f) => f.id === s.id);
@@ -266,24 +271,13 @@ function card(s) {
     `station-card ${state.selected === s.id ? "selected" : ""}`,
   );
   article.dataset.station = s.id;
-  const top = el("div", null, "card-top"),
-    monogram = el(
-      "span",
-      networkName(s)
-        .replace("Fictional ", "")
-        .split(" ")
-        .map((x) => x[0])
-        .slice(0, 2)
-        .join(""),
-      "network-monogram",
-    );
+  const top = el("div", null, "card-top");
   const heading = el("div", null, "card-title");
   heading.append(
     el("h3", stationName(s)),
     el("p", networkName(s).replace("Fictional ", "Demo · ")),
   );
   top.append(
-    monogram,
     heading,
     el(
       "span",
@@ -296,7 +290,6 @@ function card(s) {
   const specs = el("div", null, "card-specs"),
     power = el("span", null, "power-spec");
   power.append(
-    icon("bolt"),
     document.createTextNode(s.max_power_kw ?? "—"),
     el("small", "kW"),
   );
@@ -308,7 +301,7 @@ function card(s) {
     specs.append(el("span", connector, "connector-badge"));
   specs.append(el("span", `${s.points ?? "—"} points`, "points-label"));
   const bottom = el("div", null, "card-bottom"),
-    details = button("View station", () => showDetail(s), "card-link", "arrow");
+    details = button("", () => showDetail(s), "card-link");
   details.setAttribute("aria-label", `View details for ${s.name}`);
   const compare = button(
     "",
@@ -330,8 +323,8 @@ function card(s) {
     );
   favorite.setAttribute("aria-label", `${saved ? "Unsave" : "Save"} ${s.name}`);
   favorite.setAttribute("aria-pressed", saved);
-  bottom.append(details, compare, favorite);
-  article.append(top, status(s), specs);
+  bottom.append(status(s), compare, favorite);
+  article.append(details, top, specs);
   if (vehicle())
     article.append(
       el(
@@ -341,7 +334,7 @@ function card(s) {
       ),
     );
   if (s.fictional)
-    bottom.insertBefore(el("span", "FICTIONAL", "fictional-label"), compare);
+    bottom.insertBefore(el("span", "Demo", "fictional-label"), compare);
   article.append(bottom);
   return article;
 }
@@ -357,7 +350,7 @@ function render() {
     const empty = el("div", null, "empty-state");
     empty.append(
       icon("search"),
-      el("h3", "A little further, perhaps?"),
+      el("h3", "No matching stations"),
       el(
         "p",
         "No matching stations. Try a wider radius or clear your filters.",
@@ -391,6 +384,7 @@ function resetFilters() {
   clearDetail();
 }
 $("#reset-filters").onclick = resetFilters;
+$("#quick-reset").onclick = resetFilters;
 for (const id of ["power", "operational"])
   $("#" + id).onclick = () => {
     $("#" + id).setAttribute(
@@ -462,7 +456,7 @@ function mapFallback(message) {
   for (const id of ["pitch", "recenter", "fit"]) $("#" + id).disabled = true;
   if (!map) {
     $(".map-fallback p").textContent = message;
-    $(".map-fallback h2").textContent = "The list is ready when you are.";
+    $(".map-fallback h2").textContent = "Map unavailable";
   }
 }
 function initMap() {
@@ -648,16 +642,14 @@ function radiusGeoJSON() {
 }
 function updateMapData() {
   if (!map?.getSource("stations")) return;
-  map
-    .getSource("stations")
-    .setData({
-      type: "FeatureCollection",
-      features: state.filtered.map((s) => ({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [s.longitude, s.latitude] },
-        properties: { id: String(s.id) },
-      })),
-    });
+  map.getSource("stations").setData({
+    type: "FeatureCollection",
+    features: state.filtered.map((s) => ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [s.longitude, s.latitude] },
+      properties: { id: String(s.id) },
+    })),
+  });
   map.getSource("radius")?.setData(radiusGeoJSON());
   updateMarkers();
 }
@@ -684,7 +676,7 @@ function updateMarkers() {
             map.easeTo({
               center: feature.geometry.coordinates,
               zoom,
-              duration: motion() ? 450 : 0,
+              duration: motion() ? 220 : 0,
             });
           } catch {
             toast("Zoom in to explore this cluster.");
@@ -702,8 +694,12 @@ function updateMarkers() {
       node = button(
         state.selected === s.id ? `${s.max_power_kw ?? "—"} kW` : "",
         () => showDetail(s),
-        `station-pin ${s.operational === false ? "unavailable" : s.operational === true ? "" : "unknown"} ${state.selected === s.id ? "selected" : ""}`,
-        "bolt",
+        `station-pin ${s.operational === false ? "unavailable" : s.operational === true ? "" : "unknown"} ${s.max_power_kw >= 150 ? "high-power" : ""} ${state.selected === s.id ? "selected" : ""}`,
+        s.operational === false
+          ? "close"
+          : s.operational === true
+            ? "bolt"
+            : "info",
       );
       node.setAttribute(
         "aria-label",
@@ -733,7 +729,7 @@ function fitResults() {
       left: 65,
     },
     maxZoom: 14,
-    duration: motion() ? 450 : 0,
+    duration: motion() ? 220 : 0,
   });
 }
 $("#fit").onclick = fitResults;
@@ -742,7 +738,7 @@ $("#recenter").onclick = () =>
     center: [state.center[1], state.center[0]],
     zoom: 13.2,
     bearing: 0,
-    duration: motion() ? 450 : 0,
+    duration: motion() ? 220 : 0,
   });
 $("#pitch").onclick = () => {
   if (!map) return;
@@ -751,7 +747,7 @@ $("#pitch").onclick = () => {
   map.easeTo({
     pitch: pitched ? 55 : 0,
     zoom: pitched ? Math.max(14.5, map.getZoom()) : map.getZoom(),
-    duration: motion() ? 600 : 0,
+    duration: motion() ? 250 : 0,
   });
   if (map.getLayer("current-buildings"))
     map.setLayoutProperty(
@@ -872,6 +868,8 @@ async function search(override = {}) {
     state.radius = Number(data.radius);
     state.demo = result.demo;
     state.retrieved = result.retrieved_at;
+    updateSearchScope();
+    if ($("#location-mode").value === "zip") $("#search-settings").open = false;
     save("last-results", { ...result, radius: state.radius });
     updateNetworkOptions();
     clearDetail();
@@ -929,6 +927,11 @@ function infoRow(container, label, value) {
   container.append(row);
 }
 function showDetail(s) {
+  if (innerWidth <= 800) {
+    $("#search-settings").open = false;
+    $("#filters-panel").hidden = true;
+    $("#filters-toggle").setAttribute("aria-expanded", "false");
+  }
   state.selected = s.id;
   render();
   const panel = $("#detail");
@@ -946,9 +949,9 @@ function showDetail(s) {
   if (s.fictional)
     panel.append(
       el(
-        "div",
-        "FICTIONAL DEMO · Do not travel to this example location.",
-        "notice warning",
+        "p",
+        "Fictional demo station. Not a real charging location.",
+        "detail-demo",
       ),
     );
   const metrics = el("div", null, "detail-metrics");
@@ -1049,15 +1052,17 @@ function showDetail(s) {
       "p",
       `Source: ${s.provider || "Unknown provider"}. Pricing text is not a verified structured tariff; fees may apply.`,
     ),
-    el("h3", "Data, not guesswork"),
+    el("h3", "Availability"),
     el(
       "div",
       "Live availability unavailable. Reported operational status is not real-time occupancy or a guarantee that equipment works now.",
       "notice warning",
     ),
   );
-  infoRow(panel, "Last verified", dateLabel(s.verified));
-  infoRow(panel, "Last updated", dateLabel(s.updated));
+  const sourceDetails = el("details", null, "source-details");
+  sourceDetails.append(el("summary", "Source, freshness & data completeness"));
+  infoRow(sourceDetails, "Last verified", dateLabel(s.verified));
+  infoRow(sourceDetails, "Last updated", dateLabel(s.updated));
   const fields = [
       s.max_power_kw,
       s.connections?.length,
@@ -1067,7 +1072,7 @@ function showDetail(s) {
       s.updated,
     ],
     complete = fields.filter(Boolean).length;
-  panel.append(
+  sourceDetails.append(
     el(
       "p",
       `${complete} of 6 detail fields supplied — completeness, not reliability.`,
@@ -1077,7 +1082,7 @@ function showDetail(s) {
     fill = el("span");
   fill.style.width = `${(complete / 6) * 100}%`;
   bar.append(fill);
-  panel.append(
+  sourceDetails.append(
     bar,
     el(
       "p",
@@ -1085,15 +1090,42 @@ function showDetail(s) {
     ),
   );
   if (s.source_url)
-    panel.append(link("View source / report incorrect data", s.source_url));
-  panel.append(
+    sourceDetails.append(
+      link("View source / report incorrect data", s.source_url),
+    );
+  sourceDetails.append(
     el(
       "p",
       `Provider: ${s.provider || "Unknown"} · ${s.license || "See source licensing."}`,
     ),
   );
+  panel.append(sourceDetails);
   const tools = el("div", null, "detail-actions");
   tools.append(
+    button(
+      "Save",
+      (event) => {
+        toggleFavorite(s);
+        event.currentTarget.setAttribute(
+          "aria-pressed",
+          state.favorites.some((f) => f.id === s.id),
+        );
+      },
+      "secondary",
+      "heart",
+    ),
+    button(
+      "Compare",
+      (event) => {
+        toggleCompare(s);
+        event.currentTarget.setAttribute(
+          "aria-pressed",
+          state.comparison.some((c) => c.id === s.id),
+        );
+      },
+      "secondary",
+      "layers",
+    ),
     button("Share station", () => shareStation(s), "secondary", "external"),
     button(
       "Add to trip",
@@ -1109,6 +1141,11 @@ function showDetail(s) {
     ),
   );
   panel.append(tools);
+  for (const [index, pressed] of [
+    [0, state.favorites.some((f) => f.id === s.id)],
+    [1, state.comparison.some((c) => c.id === s.id)],
+  ])
+    tools.children[index].setAttribute("aria-pressed", pressed);
   if (map)
     panel.append(
       button(
@@ -1124,6 +1161,7 @@ function showDetail(s) {
                 : [0, 0],
             duration: state.fly && motion() ? 900 : 0,
           });
+          if (innerWidth <= 800) keepSelectedPinVisible(s);
         },
         "text-button",
         "pin",
@@ -1139,26 +1177,38 @@ function showDetail(s) {
     ...state.recent.filter((x) => x.id !== s.id),
   ].slice(0, 12);
   save("recent", state.recent);
-  // Preserve desktop position; on mobile, only move when the selected pin would be covered.
+  // Desktop details preserve the map. Mobile pins move only when chrome covers them.
+  if (innerWidth <= 800) {
+    keepSelectedPinVisible(s);
+    setTimeout(() => {
+      if (state.selected === s.id) keepSelectedPinVisible(s);
+    }, 230);
+  }
+}
+function keepSelectedPinVisible(s) {
+  if (!map || $(".workspace").classList.contains("list-only")) return;
+  const bounds = $("#map").getBoundingClientRect();
+  const searchBottom =
+    $(".sidebar-top").getBoundingClientRect().bottom - bounds.top;
+  const sheetTop = $(".sidebar").getBoundingClientRect().top - bounds.top;
+  const bannerBottom = $("#demo-banner").hidden
+    ? 0
+    : $("#demo-banner").getBoundingClientRect().bottom - bounds.top;
+  const top = Math.max(searchBottom, bannerBottom) + 48;
+  const bottom = sheetTop - 32;
+  const point = map.project([s.longitude, s.latitude]);
   if (
-    map &&
-    innerWidth <= 800 &&
-    !$(".workspace").classList.contains("list-only")
+    point.y < top ||
+    point.y > bottom ||
+    point.x < 28 ||
+    point.x > bounds.width - 60
   ) {
-    const point = map.project([s.longitude, s.latitude]),
-      height = $(".workspace").clientHeight,
-      visibleBottom = height * 0.54 - 35;
-    if (
-      point.y > visibleBottom ||
-      point.y < 140 ||
-      point.x < 30 ||
-      point.x > innerWidth - 65
-    )
-      map.easeTo({
-        center: [s.longitude, s.latitude],
-        offset: [0, -height * 0.22],
-        duration: 0,
-      });
+    const targetY = Math.max(top, (top + bottom) / 2);
+    map.easeTo({
+      center: [s.longitude, s.latitude],
+      offset: [0, targetY - bounds.height / 2],
+      duration: 0,
+    });
   }
 }
 async function shareURL(url) {
@@ -1181,14 +1231,9 @@ function shareStation(s) {
   shareURL(url.href);
 }
 async function openExplorer() {
-  const body = openModal("The connector lab"),
+  const body = openModal("Connectors"),
     epoch = modalEpoch;
-  body.append(
-    el(
-      "p",
-      "A little understanding goes a long way. Loading original, illustrative connector diagrams…",
-    ),
-  );
+  body.append(el("p", "Loading connector diagrams…"));
   try {
     const module = await import("./explorer.js");
     if (epoch !== modalEpoch) return;
@@ -1212,38 +1257,27 @@ $("#learn-card").onclick = openExplorer;
 $("#garage-nav").onclick = openGarage;
 $("#explore-nav").onclick = () => {
   closeModal();
-  resetFilters();
 };
-function inputField(form, label, name, value = "", type = "text", attrs = {}) {
-  const wrap = el("label", label);
-  const input = el("input");
-  Object.assign(input, { name, type, value, ...attrs });
-  wrap.append(input);
-  form.append(wrap);
-  return input;
-}
-function selectField(form, label, name, options, value) {
-  const wrap = el("label", label),
-    select = el("select");
-  select.name = name;
-  for (const entry of options) {
-    const [val, text] = Array.isArray(entry) ? entry : [entry, entry];
-    select.add(new Option(text, val));
-  }
-  if (value != null) select.value = value;
-  wrap.append(select);
-  form.append(wrap);
-  return select;
-}
 function openGarage(editId) {
-  const body = openModal("Your car. Your kind of charge.");
+  const body = openModal("My garage");
   body.append(
     el(
       "p",
-      "A private, local garage. No account, no inferred specifications. Use your owner’s manual or manufacturer documentation; entries below are user-supplied, not independently verified.",
+      "Saved on this device; no account needed. Enter specifications from your owner’s manual or manufacturer documentation. Entries are not independently verified.",
     ),
   );
   const saved = el("div", null, "vehicle-list");
+  saved.setAttribute("aria-label", "Saved vehicles");
+  if (state.vehicles.length) saved.setAttribute("role", "list");
+  if (state.vehicles.length) body.append(el("h3", "Saved vehicles"));
+  else
+    saved.append(
+      el(
+        "p",
+        "No saved vehicles. Add your vehicle below to check compatibility and prefill charging estimates.",
+        "assumptions",
+      ),
+    );
   for (const v of state.vehicles) {
     const item = el(
         "div",
@@ -1261,6 +1295,12 @@ function openGarage(editId) {
         "text-button",
         "car",
       );
+    choose.setAttribute("aria-pressed", String(v.id === state.activeVehicle));
+    choose.setAttribute(
+      "aria-label",
+      `Use ${v.make} ${v.model}${v.id === state.activeVehicle ? ", selected vehicle" : ""}`,
+    );
+    item.setAttribute("role", "listitem");
     item.append(
       choose,
       button("Edit", () => openGarage(v.id), "text-button"),
@@ -1278,22 +1318,25 @@ function openGarage(editId) {
         "text-button",
       ),
     );
+    const controls = $$("button", item);
+    controls[1].setAttribute("aria-label", `Edit ${v.make} ${v.model}`);
+    controls[2].setAttribute("aria-label", `Remove ${v.make} ${v.model}`);
+    if (v.id === state.activeVehicle)
+      item.append(el("small", "Selected vehicle"));
     saved.append(item);
   }
   body.append(saved);
-  const silhouette = el("div", null, "garage-silhouette");
-  silhouette.innerHTML =
-    '<svg viewBox="0 0 180 75" aria-label="Generic vehicle silhouette, not a specific model"><path d="m16 49 7-18 31-5 20-17h44l24 19 23 6 6 18H15Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="m60 27 18-13h35l18 13Z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="46" cy="51" r="12" fill="var(--surface)" stroke="currentColor" stroke-width="2"/><circle cx="139" cy="51" r="12" fill="var(--surface)" stroke="currentColor" stroke-width="2"/></svg>';
-  silhouette.append(
-    el(
-      "p",
-      "Generic silhouette. Specifications and charging-port geometry vary by vehicle.",
-    ),
-  );
-  body.append(silhouette);
   const editing = state.vehicles.find((v) => v.id === editId),
     form = el("form"),
-    grid = el("div", null, "form-grid");
+    details = formSection("Vehicle"),
+    grid = el("div", null, "form-grid"),
+    specifications = formSection("Charging specifications"),
+    specificationGrid = el("div", null, "form-grid"),
+    source = formSection(
+      "Specification source",
+      "Required so you can review the origin and age of your manual entries.",
+    ),
+    sourceGrid = el("div", null, "form-grid");
   inputField(grid, "Make", "make", editing?.make || "", "text", {
     required: true,
     maxLength: 60,
@@ -1320,7 +1363,7 @@ function openGarage(editId) {
     editing?.connectors?.[0] || "CCS1",
   );
   inputField(
-    grid,
+    specificationGrid,
     "Usable battery capacity (kWh)",
     "battery_kwh",
     editing?.battery_kwh ?? "",
@@ -1328,7 +1371,7 @@ function openGarage(editId) {
     { min: 1, max: 500, step: "any", placeholder: "From a verified source" },
   );
   inputField(
-    grid,
+    specificationGrid,
     "Maximum AC power (kW)",
     "max_ac_kw",
     editing?.max_ac_kw ?? "",
@@ -1336,7 +1379,7 @@ function openGarage(editId) {
     { min: 0, max: 100, step: "any" },
   );
   inputField(
-    grid,
+    specificationGrid,
     "Maximum DC power (kW)",
     "max_dc_kw",
     editing?.max_dc_kw ?? "",
@@ -1344,7 +1387,7 @@ function openGarage(editId) {
     { min: 0, max: 1000, step: "any" },
   );
   inputField(
-    grid,
+    specificationGrid,
     "Consumption (kWh / 100 mi)",
     "consumption_kwh_per_100_miles",
     editing?.consumption_kwh_per_100_miles ?? "",
@@ -1352,7 +1395,7 @@ function openGarage(editId) {
     { min: 1, max: 200, step: "any" },
   );
   inputField(
-    grid,
+    sourceGrid,
     "Specification source URL or reference",
     "source",
     editing?.source || "",
@@ -1360,22 +1403,20 @@ function openGarage(editId) {
     { required: true, maxLength: 500 },
   );
   inputField(
-    grid,
+    sourceGrid,
     "Source checked on",
     "source_date",
     editing?.source_date || new Date().toISOString().slice(0, 10),
     "date",
     { required: true },
   );
-  form.append(grid);
-  const adapterSection = el("div", null, "form-section");
-  adapterSection.append(
-    el("h3", "Adapters you own"),
-    el(
-      "p",
-      "Record only adapters approved for your vehicle and current type. This is not a safety certification.",
-      "assumptions",
-    ),
+  details.append(grid);
+  specifications.append(specificationGrid);
+  source.append(sourceGrid);
+  form.append(details, specifications, source);
+  const adapterSection = formSection(
+    "Adapters you own",
+    "Record only adapters approved for your vehicle and current type. This is not a safety certification.",
   );
   const adapterList = el("div", null, "adapter-list");
   const addAdapter = (a = {}) => {
@@ -1395,23 +1436,37 @@ function openGarage(editId) {
       ["AC", "DC"],
       a.current_type || "DC",
     );
-    row.append(button("Remove", () => row.remove(), "text-button"));
+    row.append(
+      button(
+        "Remove adapter",
+        () => {
+          const focusTarget =
+            row.nextElementSibling?.querySelector("select") ||
+            row.previousElementSibling?.querySelector("select") ||
+            adapterList.nextElementSibling;
+          row.remove();
+          focusTarget?.focus();
+        },
+        "text-button",
+      ),
+    );
     adapterList.append(row);
+    return row;
   };
   for (const a of editing?.adapters || []) addAdapter(a);
   adapterSection.append(
     adapterList,
-    button("Add an adapter", () => addAdapter(), "text-button", "plug"),
+    button(
+      "Add an adapter",
+      () => addAdapter().querySelector("select").focus(),
+      "text-button",
+      "plug",
+    ),
   );
   form.append(adapterSection);
-  const access = el("div", null, "form-section");
-  access.append(
-    el("h3", "Network access is separate"),
-    el(
-      "p",
-      "Enter networks for which you have independently confirmed authorization. A NACS inlet does not guarantee Supercharger access.",
-      "assumptions",
-    ),
+  const access = formSection(
+    "Network access",
+    "Enter only networks where you have confirmed authorization. A NACS inlet does not guarantee Supercharger access.",
   );
   inputField(
     access,
@@ -1424,11 +1479,7 @@ function openGarage(editId) {
   error.setAttribute("role", "alert");
   form.append(error);
   const actions = el("div", null, "form-actions"),
-    submit = el(
-      "button",
-      editing ? "Save vehicle changes" : "Add to my garage",
-      "primary",
-    );
+    submit = el("button", editing ? "Save changes" : "Add vehicle", "primary");
   submit.type = "submit";
   actions.append(submit);
   form.append(actions);
@@ -1472,17 +1523,23 @@ function openGarage(editId) {
 }
 function openEstimator(s, second) {
   const body = openModal(
-    second ? "Compare charging stops" : "A clearer charging estimate",
+    second ? "Compare charging estimates" : "Charging estimate",
   );
   body.append(
     el(
       "p",
-      "Constant-power approximation, not a charging prediction. Enter your vehicle’s specifications and your own tariff assumptions. No ambiguous station pricing text is parsed.",
+      "A constant-power estimate, not a charging prediction. Use your vehicle specifications and enter fees manually; station pricing text is not interpreted.",
     ),
   );
   const v = vehicle(),
     form = el("form"),
-    grid = el("div", null, "form-grid");
+    charging = formSection("Charging assumptions"),
+    grid = el("div", null, "form-grid"),
+    fees = formSection(
+      "Fees",
+      "Leave a fee blank if unknown; enter 0 if none. Any unknown fee makes the total unknown. Amounts are before tax unless you enter tax-inclusive rates.",
+    ),
+    feeGrid = el("div", null, "form-grid");
   inputField(grid, "Starting battery (%)", "start", 20, "number", {
     min: 0,
     max: 99,
@@ -1547,23 +1604,36 @@ function openEstimator(s, second) {
     ["session_fee", "Session fee ($)"],
     ["parking_fee", "Parking fee ($)"],
   ])
-    inputField(grid, label, name, "", "number", {
+    inputField(feeGrid, label, name, "", "number", {
       min: 0,
       max: 10000,
       step: "any",
       placeholder: "Unknown; enter 0 if none",
     });
-  form.append(
-    grid,
-    el(
-      "p",
-      "Leaving any fee blank makes the total unknown. Amounts are before tax; enter tax-inclusive rates if appropriate.",
-      "assumptions",
-    ),
-  );
+  charging.append(grid);
+  fees.append(feeGrid);
+  const feeFeedback = el("p", null, "assumptions");
+  feeFeedback.id = "estimate-fee-feedback";
+  feeFeedback.setAttribute("role", "status");
+  feeFeedback.setAttribute("aria-live", "polite");
+  feeFeedback.setAttribute("aria-atomic", "true");
+  const updateFeeFeedback = () => {
+    const missing = $$("input", feeGrid).filter(
+      (input) => input.value === "",
+    ).length;
+    feeFeedback.textContent = missing
+      ? `${missing} ${missing === 1 ? "fee is" : "fees are"} unknown. The total cost will be unknown.`
+      : "All fees entered. The estimate can include a total cost.";
+  };
+  for (const input of $$("input", feeGrid)) {
+    input.setAttribute("aria-describedby", feeFeedback.id);
+    input.addEventListener("input", updateFeeFeedback);
+  }
+  updateFeeFeedback();
+  fees.append(feeFeedback);
+  form.append(charging, fees);
   if (second) {
-    const box = el("div", null, "form-section");
-    box.append(el("h3", `Second stop: ${stationName(second)}`));
+    const box = formSection(`Second stop: ${stationName(second)}`);
     inputField(
       box,
       "Second charger limit (kW)",
@@ -1583,7 +1653,8 @@ function openEstimator(s, second) {
   }
   const submit = el("button", "Calculate estimate", "primary");
   submit.type = "submit";
-  const output = el("div");
+  const output = el("section");
+  output.setAttribute("aria-label", "Charging estimate results");
   output.setAttribute("aria-live", "polite");
   form.append(el("div", null, "form-actions"));
   $(".form-actions", form).append(submit);
@@ -1647,19 +1718,32 @@ function openEstimator(s, second) {
         ),
       );
     } catch (error) {
-      output.append(el("p", error.message, "message error"));
+      const message = el("p", error.message, "message error");
+      message.setAttribute("role", "alert");
+      output.append(message);
     }
   };
 }
 function openComparison() {
   if (!state.comparison.length) return;
-  const body = openModal("A side-by-side look"),
+  const body = openModal("Compare stations"),
     wrap = el("div", null, "table-scroll"),
     table = el("table", null, "comparison-table"),
+    thead = el("thead"),
+    tbody = el("tbody"),
     head = el("tr");
+  table.append(el("caption", "Reported station details"));
+  wrap.tabIndex = 0;
+  wrap.setAttribute("role", "region");
+  wrap.setAttribute(
+    "aria-label",
+    "Station comparison; scroll horizontally for more stations",
+  );
   head.append(el("th", "Station"));
   state.comparison.forEach((s) => head.append(el("th", stationName(s))));
-  table.append(head);
+  for (const cell of head.children) cell.scope = "col";
+  thead.append(head);
+  table.append(thead, tbody);
   for (const [label, value] of [
     ["Reported status", (s) => s.status],
     ["Maximum advertised power", (s) => `${s.max_power_kw ?? "Unknown"} kW`],
@@ -1677,8 +1761,9 @@ function openComparison() {
   ]) {
     const row = el("tr");
     row.append(el("th", label));
+    row.firstElementChild.scope = "row";
     state.comparison.forEach((s) => row.append(el("td", value(s))));
-    table.append(row);
+    tbody.append(row);
   }
   wrap.append(table);
   body.append(
@@ -1692,7 +1777,7 @@ function openComparison() {
   if (state.comparison.length >= 2)
     body.append(
       button(
-        "Compare charging time & cost",
+        "Compare charging estimates",
         () => openEstimator(state.comparison[0], state.comparison[1]),
         "primary",
         "bolt",
@@ -1712,11 +1797,11 @@ const networkLinks = {
   ChargePoint: "https://www.chargepoint.com/",
 };
 function openNetworks() {
-  const body = openModal("Networks, without the guesswork");
+  const body = openModal("Charging networks");
   body.append(
     el(
       "p",
-      "Operators are not connector standards. Public access, payment methods and vehicle authorization can vary by site. Neutral labels only; Current is not affiliated with these networks.",
+      "Access, payment and vehicle authorization vary by site. A connector match does not guarantee network access. Current is not affiliated with these operators.",
     ),
   );
   const chips = el("div", null, "network-chips"),
@@ -1727,7 +1812,7 @@ function openNetworks() {
       matches = state.filtered.filter((s) => networkName(s) === name).length;
     chips.append(
       button(
-        `${name.replace("Fictional ", "Demo ")} · ${matches}`,
+        `${name} · ${matches}`,
         () => {
           $("#network").value = name;
           clearDetail();
@@ -1736,7 +1821,7 @@ function openNetworks() {
         "chip",
       ),
     );
-    const card = el("div", null, "network-card");
+    const card = el("section", null, "network-card");
     card.append(
       el("h3", name),
       el("p", `${matches} matching of ${stations.length} retrieved stations`),
@@ -1760,12 +1845,20 @@ function openNetworks() {
       save("networks", state.preferred);
       render();
     };
-    label.append(check, document.createTextNode("Preferred network"));
+    label.append(check, document.createTextNode(`Prefer ${name}`));
     card.append(label);
     if (networkLinks[name])
       card.append(link("Official network information", networkLinks[name]));
     grid.append(card);
   }
+  if (!networks.length)
+    grid.append(
+      el(
+        "p",
+        "No networks loaded. Search for stations to view networks and set preferences.",
+        "assumptions",
+      ),
+    );
   body.append(chips, grid);
 }
 $("#networks-open").onclick = openNetworks;
@@ -1800,23 +1893,28 @@ function drawRoute() {
   }
 }
 function openTrip() {
-  const body = openModal("Make the journey part of the plan.");
+  const body = openModal("Plan a trip");
   body.append(
     el(
       "p",
       "Coordinate-based driving routes with explicit range assumptions. Navigation and routing providers receive the locations you submit.",
     ),
   );
-  if (!config.routing || config.mode === "static")
-    body.append(
-      el(
-        "div",
-        "Driving routes are disabled: no routing provider is configured for this deployment. Set ROUTING_BASE_URL on the backend. Manual saved stops remain available; no fictional route, detour or range prediction is generated.",
-        "notice warning",
-      ),
+  const routingDisabled = !config.routing || config.mode === "static";
+  if (routingDisabled) {
+    const notice = el(
+      "div",
+      "Driving routes are unavailable in this deployment. You can still add stops from station details and navigate each leg. Manual stops have no calculated driving distance or arrival battery estimate.",
+      "notice warning",
     );
+    notice.id = "routing-unavailable";
+    body.append(notice);
+  }
   const form = el("form"),
-    grid = el("div", null, "form-grid");
+    routeSection = formSection("Route"),
+    grid = el("div", null, "form-grid"),
+    assumptions = formSection("Range assumptions"),
+    assumptionGrid = el("div", null, "form-grid");
   inputField(
     grid,
     "Origin · latitude, longitude",
@@ -1833,31 +1931,61 @@ function openTrip() {
     "text",
     { required: true, placeholder: "e.g. 41.3083, -72.9279" },
   );
-  inputField(grid, "Assumed full-charge range (mi)", "range", 250, "number", {
-    min: 1,
-    max: 1000,
-    required: true,
-  });
-  inputField(grid, "Starting battery (%)", "start", 80, "number", {
+  inputField(
+    assumptionGrid,
+    "Assumed full-charge range (mi)",
+    "range",
+    250,
+    "number",
+    {
+      min: 1,
+      max: 1000,
+      required: true,
+    },
+  );
+  inputField(assumptionGrid, "Starting battery (%)", "start", 80, "number", {
     min: 1,
     max: 100,
     required: true,
   });
-  inputField(grid, "Minimum arrival reserve (%)", "reserve", 15, "number", {
-    min: 0,
-    max: 90,
-    required: true,
-  });
-  inputField(grid, "Station corridor width (mi)", "corridor", 5, "number", {
-    min: 1,
-    max: 25,
-    required: true,
-  });
-  form.append(grid);
+  inputField(
+    assumptionGrid,
+    "Minimum arrival reserve (%)",
+    "reserve",
+    15,
+    "number",
+    {
+      min: 0,
+      max: 90,
+      required: true,
+    },
+  );
+  inputField(
+    assumptionGrid,
+    "Station corridor width (mi)",
+    "corridor",
+    5,
+    "number",
+    {
+      min: 1,
+      max: 25,
+      required: true,
+    },
+  );
+  routeSection.append(grid);
+  assumptions.append(assumptionGrid);
+  form.append(routeSection, assumptions);
+  if (routingDisabled) {
+    routeSection.disabled = true;
+    assumptions.disabled = true;
+    form.setAttribute("aria-describedby", "routing-unavailable");
+  }
   const actions = el("div", null, "form-actions"),
     submit = el("button", "Plan driving route", "primary");
   submit.type = "submit";
-  submit.disabled = !config.routing || config.mode === "static";
+  submit.disabled = routingDisabled;
+  if (routingDisabled)
+    submit.setAttribute("aria-describedby", "routing-unavailable");
   actions.append(submit);
   form.append(actions);
   body.append(form);
@@ -1916,6 +2044,10 @@ function openTrip() {
             "text-button",
           ),
         );
+        $("button", row).setAttribute(
+          "aria-label",
+          `Add ${stationName(s)} to trip`,
+        );
         result.append(row);
       }
     }
@@ -1924,7 +2056,7 @@ function openTrip() {
       timeline.append(
         el(
           "p",
-          "No stops yet. Add a real station from its details.",
+          "No stops yet. Open a station’s details and choose Add to trip, or add a route candidate above. Demo stations are fictional and not for navigation.",
           "assumptions",
         ),
       );
@@ -1950,7 +2082,7 @@ function openTrip() {
         ),
         button("Estimate charging", () => openEstimator(s), "text-button"),
         button(
-          "Remove",
+          "Remove stop",
           () => {
             state.tripStops.splice(i, 1);
             renderTimeline();
@@ -1958,9 +2090,19 @@ function openTrip() {
           "text-button",
         ),
       );
+      $("a", stop).setAttribute("aria-label", `Navigate to ${stationName(s)}`);
+      const stopButtons = $$("button", stop);
+      stopButtons[0].setAttribute(
+        "aria-label",
+        `Estimate charging at ${stationName(s)}`,
+      );
+      stopButtons[1].setAttribute(
+        "aria-label",
+        `Remove ${stationName(s)} from trip`,
+      );
       timeline.append(stop);
     });
-    result.append(el("h3", "Your stop timeline"), timeline);
+    result.append(el("h3", "Trip stops"), timeline);
   };
   renderTimeline();
   form.onsubmit = async (e) => {
@@ -1990,9 +2132,11 @@ function openTrip() {
       renderTimeline();
       toast("Route ready. Review assumptions and sampled station coverage.");
     } catch (error) {
-      result.prepend(el("div", error.message, "notice warning"));
+      const message = el("div", error.message, "notice warning");
+      message.setAttribute("role", "alert");
+      result.prepend(message);
     } finally {
-      submit.disabled = false;
+      submit.disabled = routingDisabled;
     }
   };
 }
@@ -2033,7 +2177,7 @@ function exportCSV() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 function openTools() {
-  const body = openModal("Make it yours."),
+  const body = openModal("Settings and saved searches"),
     grid = el("div", null, "tool-grid");
   grid.append(
     button("Export filtered results to CSV", exportCSV, "secondary", "list"),
@@ -2066,21 +2210,17 @@ function openTools() {
       "secondary",
       "external",
     ),
-    button(
-      "Charging time & cost calculator",
-      () => openEstimator(),
-      "secondary",
-      "bolt",
-    ),
+    button("Charging estimate", () => openEstimator(), "secondary", "bolt"),
   );
   body.append(grid);
+  body.append(el("h3", "Display and map"));
   for (const [label, key, current] of [
     [
-      "Outdoor readability / reduced transparency",
+      "Reduce transparency for outdoor use",
       "outdoor",
       document.documentElement.classList.contains("outdoor"),
     ],
-    ["Animate explicit station fly-to", "fly", state.fly],
+    ["Animate map moves to selected stations", "fly", state.fly],
   ]) {
     const row = el("label", null, "check-row"),
       input = el("input");
@@ -2098,7 +2238,11 @@ function openTools() {
   body.append(el("h3", "Saved searches"));
   if (!state.searches.length)
     body.append(
-      el("p", "Your saved searches stay on this device.", "assumptions"),
+      el(
+        "p",
+        "No saved searches. Choose Save this search above to keep your current location and search settings on this device.",
+        "assumptions",
+      ),
     );
   state.searches.forEach((s, i) => {
     const row = el("div", null, "saved-search");
@@ -2131,9 +2275,23 @@ function openTools() {
         "text-button",
       ),
     );
+    const searchLabel = row.firstElementChild.textContent;
+    const searchButtons = $$("button", row);
+    searchButtons[0].setAttribute(
+      "aria-label",
+      `Run saved search: ${searchLabel}`,
+    );
+    searchButtons[1].setAttribute(
+      "aria-label",
+      `Remove saved search: ${searchLabel}`,
+    );
     body.append(row);
   });
   body.append(el("h3", "Recently viewed"));
+  if (!state.recent.length)
+    body.append(
+      el("p", "Open a station’s details to find it here later.", "assumptions"),
+    );
   for (const s of state.recent.slice(0, 6))
     body.append(
       button(
@@ -2145,6 +2303,7 @@ function openTools() {
         "text-button",
       ),
     );
+  body.append(el("h3", "Data on this device"));
   body.append(
     el(
       "div",
@@ -2153,9 +2312,7 @@ function openTools() {
     ),
   );
   if (config.mode !== "static")
-    body.append(
-      link("Explore the FastAPI documentation", "./docs", "secondary"),
-    );
+    body.append(link("API documentation", "./docs", "secondary"));
 }
 $("#more-actions").onclick = openTools;
 $("#data-info").onclick = () => {

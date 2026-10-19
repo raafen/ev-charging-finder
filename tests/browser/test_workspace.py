@@ -121,6 +121,41 @@ class WorkspaceTests(unittest.TestCase):
                 expect(toggle).to_have_attribute("aria-expanded", "false")
                 self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 390)
 
+    def test_coordinate_search_and_zip_validation_remain_independent(self):
+        for mode in self.urls:
+            with self.subTest(mode=mode):
+                page, _ = self.open_workspace(mode)
+                page.locator("#search-settings summary").click()
+                page.locator("#location-mode").select_option("coordinates")
+                page.locator('[name="latitude"]').fill("0")
+                page.locator('[name="longitude"]').fill("0")
+                page.locator("#submit").click()
+                expect(page.locator("#results .station-card")).to_have_count(0)
+                expect(page.locator("#results")).to_contain_text("No matching stations")
+                page.locator("#location-mode").select_option("zip")
+                page.locator("#zip").fill("10036")
+                page.locator("#submit").click()
+                expect(page.locator('[data-station="demo-1"]')).to_be_visible()
+                expect(page.locator('[name="latitude"]')).to_be_disabled()
+
+    def test_detail_save_and_comparison_actions_are_independent(self):
+        for mode in self.urls:
+            with self.subTest(mode=mode):
+                page, _ = self.open_workspace(mode)
+                page.locator('[data-station="demo-1"] .card-link').click()
+                expect(page.locator("#detail")).to_contain_text("Demo Central Garage")
+                page.get_by_role("button", name="Save", exact=True).click()
+                expect(page.get_by_role("button", name="Save", exact=True)).to_have_attribute("aria-pressed", "true")
+                page.get_by_role("button", name="Compare", exact=True).click()
+                expect(page.locator("#comparison-tray")).to_be_visible()
+                page.locator("#compare-open").click()
+                expect(page.locator(".comparison-table")).to_contain_text("Demo Central Garage")
+                page.locator("#modal-close").click()
+                page.locator("#detail .back").click()
+                page.locator("#favorites-nav").click()
+                expect(page.locator("#results .station-card")).to_have_count(1)
+                expect(page.locator('[data-station="demo-1"]')).to_be_visible()
+
 
 if __name__ == "__main__":
     unittest.main()

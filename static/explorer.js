@@ -5,7 +5,7 @@ const CONNECTORS = {
   NACS: {
     title: "NACS / SAE J3400",
     short: "NACS",
-    color: "#35bfa4",
+    color: "#68736b",
     power: "AC or DC, depending on the equipment and vehicle",
     detail:
       "A compact interface whose two main power contacts serve AC or DC. A matching shape alone does not guarantee access to a charging network or support for an adapter.",
@@ -24,7 +24,7 @@ const CONNECTORS = {
   J1772: {
     title: "SAE J1772",
     short: "J1772",
-    color: "#63a8ec",
+    color: "#818a83",
     power: "AC charging; commonly North American Level 1 and Level 2",
     detail:
       "The vehicle’s onboard charger converts AC into DC for its battery. J1772 by itself does not provide the additional DC power contacts used by CCS1.",
@@ -43,7 +43,7 @@ const CONNECTORS = {
   CCS1: {
     title: "CCS Combo 1",
     short: "CCS1",
-    color: "#d69b48",
+    color: "#858377",
     power: "DC fast charging through the lower pair of power contacts",
     detail:
       "CCS1 combines a J1772-style upper interface with two larger DC contacts below. A compatible vehicle inlet can accept J1772 AC or CCS1 DC; an AC-only J1772 inlet cannot accept a CCS1 plug.",
@@ -64,7 +64,7 @@ const CONNECTORS = {
   CHAdeMO: {
     title: "CHAdeMO",
     short: "CHAdeMO",
-    color: "#b88ee6",
+    color: "#757d7b",
     power: "DC charging using a dedicated connector",
     detail:
       "A DC charging interface used by certain vehicles and stations. A vehicle may have a separate AC inlet. Availability and compatibility vary by vehicle, market and charging site.",
@@ -90,38 +90,38 @@ function connectorSVG(name, x, y, scale = 1) {
   const item = CONNECTORS[name];
   const extra =
     name === "CCS1"
-      ? '<rect x="-61" y="27" width="122" height="83" rx="30" fill="#253447" stroke="currentColor" stroke-width="3"/>'
+      ? '<rect x="-61" y="27" width="122" height="83" rx="30" fill="#343b37" stroke="currentColor" stroke-width="3"/>'
       : "";
   const contacts = item.pins
     .map(
       ([px, py, radius]) =>
-        `<circle cx="${px * 100}" cy="${-py * 100}" r="${radius * 100}" fill="#d8e3e9" stroke="#162330" stroke-width="5"/>`,
+        `<circle cx="${px * 100}" cy="${-py * 100}" r="${radius * 100}" fill="#dce1dc" stroke="#202622" stroke-width="5"/>`,
     )
     .join("");
   const outline =
     name === "NACS"
-      ? '<path d="M-49-42Q-49-66-23-66H23Q49-66 49-42V37Q49 65 23 65H-23Q-49 65-49 37Z" fill="#253447" stroke="currentColor" stroke-width="5"/>'
-      : `<ellipse rx="${name === "CHAdeMO" ? 75 : 66}" ry="${name === "CHAdeMO" ? 75 : 68}" fill="#253447" stroke="currentColor" stroke-width="5"/>`;
+      ? '<path d="M-49-42Q-49-66-23-66H23Q49-66 49-42V37Q49 65 23 65H-23Q-49 65-49 37Z" fill="#343b37" stroke="currentColor" stroke-width="5"/>'
+      : `<ellipse rx="${name === "CHAdeMO" ? 75 : 66}" ry="${name === "CHAdeMO" ? 75 : 68}" fill="#343b37" stroke="currentColor" stroke-width="5"/>`;
   const latch =
     name === "CHAdeMO"
       ? '<path d="M-79-32H-91V44H-77M79-32H91V44H77" fill="none" stroke="currentColor" stroke-width="9"/>'
       : '<rect x="-18" y="-79" width="36" height="12" rx="5" fill="currentColor"/>';
-  return `<g transform="translate(${x} ${y}) scale(${scale})" style="color:${item.color}"><path d="M-24 60V136Q-24 154 0 154H22V202" fill="none" stroke="#425166" stroke-width="24"/>${extra}${outline}${contacts}${latch}</g>`;
+  return `<g transform="translate(${x} ${y}) scale(${scale})" style="color:${item.color}"><path d="M-24 60V136Q-24 154 0 154H22V202" fill="none" stroke="#616b65" stroke-width="24"/>${extra}${outline}${contacts}${latch}</g>`;
 }
 
 function diagramSVG(primary, secondary, compare, mode) {
   let drawing;
   if (mode === "port") {
     drawing =
-      '<path d="M55 206V162L101 145L132 98H265L310 145H347V206Z" fill="#253447" stroke="currentColor" stroke-width="4"/><circle cx="124" cy="206" r="29" fill="#425166"/><circle cx="286" cy="206" r="29" fill="#425166"/><rect x="302" y="152" width="28" height="28" rx="6" fill="#35bfa4"/><path d="M330 166H381" stroke="currentColor" stroke-width="4" stroke-dasharray="7 7"/><rect x="387" y="141" width="48" height="50" rx="8" fill="#425166" stroke="currentColor" stroke-width="3"/><path d="M435 166H476" stroke="currentColor" stroke-width="4" stroke-dasharray="7 7"/>' +
+      '<path d="M55 206V162L101 145L132 98H265L310 145H347V206Z" fill="#343b37" stroke="currentColor" stroke-width="4"/><circle cx="124" cy="206" r="29" fill="#616b65"/><circle cx="286" cy="206" r="29" fill="#616b65"/><rect x="302" y="152" width="28" height="28" rx="6" fill="#c5cec2"/><path d="M330 166H381" stroke="currentColor" stroke-width="4" stroke-dasharray="7 7"/><rect x="387" y="141" width="48" height="50" rx="8" fill="#616b65" stroke="currentColor" stroke-width="3"/><path d="M435 166H476" stroke="currentColor" stroke-width="4" stroke-dasharray="7 7"/>' +
       connectorSVG(primary, 548, 153, 0.66) +
       '<text x="192" y="279" text-anchor="middle">Generic vehicle inlet</text><text x="412" y="119" text-anchor="middle">Adapter?</text><text x="412" y="279" text-anchor="middle">Compatibility must be verified</text>';
   } else if (mode === "scene") {
     drawing =
-      '<rect x="65" y="53" width="136" height="203" rx="17" fill="#253447" stroke="currentColor" stroke-width="4"/><rect x="86" y="75" width="94" height="65" rx="8" fill="#35bfa4"/><text x="133" y="113" text-anchor="middle" fill="#162330">EV</text><path d="M200 113Q270 100 264 196T337 178" fill="none" stroke="#63a8ec" stroke-width="9"/><path d="M327 217V165L374 145L407 106H518L552 145H583V217Z" fill="#253447" stroke="currentColor" stroke-width="4"/><circle cx="382" cy="217" r="27" fill="#425166"/><circle cx="529" cy="217" r="27" fill="#425166"/><text x="133" y="290" text-anchor="middle">Generic charger</text><text x="456" y="290" text-anchor="middle">Park · connect · authorize · charge</text>';
+      '<rect x="65" y="53" width="136" height="203" rx="17" fill="#343b37" stroke="currentColor" stroke-width="4"/><rect x="86" y="75" width="94" height="65" rx="8" fill="#c5cec2"/><text x="133" y="113" text-anchor="middle" fill="#202622">EV</text><path d="M200 113Q270 100 264 196T337 178" fill="none" stroke="#727c75" stroke-width="9"/><path d="M327 217V165L374 145L407 106H518L552 145H583V217Z" fill="#343b37" stroke="currentColor" stroke-width="4"/><circle cx="382" cy="217" r="27" fill="#616b65"/><circle cx="529" cy="217" r="27" fill="#616b65"/><text x="133" y="290" text-anchor="middle">Generic charger</text><text x="456" y="290" text-anchor="middle">Park · connect · authorize · charge</text>';
   } else if (mode === "exploded") {
     drawing =
-      '<path d="M74 163H554" stroke="currentColor" stroke-width="2" stroke-dasharray="6 8"/><rect x="84" y="108" width="74" height="110" rx="28" fill="#425166" stroke="currentColor" stroke-width="3"/><ellipse cx="287" cy="163" rx="47" ry="61" fill="#253447" stroke="currentColor" stroke-width="3"/>' +
+      '<path d="M74 163H554" stroke="currentColor" stroke-width="2" stroke-dasharray="6 8"/><rect x="84" y="108" width="74" height="110" rx="28" fill="#616b65" stroke="currentColor" stroke-width="3"/><ellipse cx="287" cy="163" rx="47" ry="61" fill="#343b37" stroke="currentColor" stroke-width="3"/>' +
       connectorSVG(primary, 465, 143, 0.78) +
       '<text x="121" y="286" text-anchor="middle">Outer grip</text><text x="287" y="286" text-anchor="middle">Insulating body</text><text x="474" y="286" text-anchor="middle">Contact face</text>';
   } else {
@@ -147,15 +147,15 @@ export async function mountExplorer(container) {
   }
   const root = document.createElement("section");
   root.className = "explorer";
-  root.setAttribute("aria-labelledby", `${prefix}-title`);
+  root.setAttribute("aria-label", "Connector illustrations and charging guide");
   const options = Object.entries(CONNECTORS)
     .map(([name, item]) => `<option value="${name}">${item.title}</option>`)
     .join("");
   root.innerHTML = `
-    <header class="explorer__header"><p class="explorer__eyebrow">Connector studio</p><h2 id="${prefix}-title">Understand the connection</h2><p>Explore charging interfaces without needing a real charger. All geometry and animations here are original, simplified teaching illustrations — not verified product models, pinouts or vehicle specifications.</p></header>
+    <header class="explorer__header"><p>Compare connector types and explore how charging works. Original diagrams and 3D models are simplified illustrations—not verified product geometry, pinouts or vehicle specifications.</p></header>
     <div class="explorer__selectors">
       <label for="${prefix}-primary">Connector<select id="${prefix}-primary" data-role="primary">${options}</select></label>
-      <label for="${prefix}-mode">Explore<select id="${prefix}-mode" data-role="mode"><option value="connector">Connector face</option><option value="exploded">Separated-parts schematic</option><option value="port">Vehicle inlet & adapter</option><option value="scene">Charging scene / introduction</option></select></label>
+      <label for="${prefix}-mode">View<select id="${prefix}-mode" data-role="mode"><option value="connector">Connector face</option><option value="exploded">Separated-parts schematic</option><option value="port">Vehicle inlet & adapter</option><option value="scene">Charging introduction</option></select></label>
       <label class="explorer__check"><input type="checkbox" data-role="compare"> Compare two connectors</label>
       <label data-role="secondary-label" hidden for="${prefix}-secondary">Compare with<select id="${prefix}-secondary" data-role="secondary">${options}</select></label>
     </div>
@@ -171,7 +171,30 @@ export async function mountExplorer(container) {
     <p class="explorer__explanation" data-role="explanation" aria-live="polite"></p>
     <div class="explorer__facts" data-role="facts"></div>
     <section class="explorer__section" aria-labelledby="${prefix}-levels"><h3 id="${prefix}-levels">AC and DC: where conversion happens</h3><div class="explorer__cards"><article><h4>Level 1 · AC</h4><p>In North America, usually a 120 V household supply with suitable charging equipment. Often the slowest option. The onboard charger converts AC to DC.</p></article><article><h4>Level 2 · AC</h4><p>In North America, usually a 208–240 V supply. Common at homes, workplaces and destinations. The vehicle’s onboard charger still limits AC input.</p></article><article><h4>DC fast charging</h4><p>The station converts power to DC before it reaches the vehicle. Often called “Level 3” informally; DC fast charging is the clearer term. Battery conditions and shared site power can limit speed.</p></article></div><p class="explorer__hint">“Level” terminology varies by region. Connector shape does not establish voltage, maximum power, charging time or network access.</p></section>
-    <section class="explorer__section" aria-labelledby="${prefix}-energy"><h3 id="${prefix}-energy">Follow the energy</h3><label class="explorer__inline-label" for="${prefix}-energy-mode">Energy path<select id="${prefix}-energy-mode" data-role="energy-mode"><option value="ac">AC charging</option><option value="dc">DC fast charging</option></select></label><div class="explorer__flow" data-role="flow"></div><div class="explorer__battery-row"><div class="explorer__battery" aria-hidden="true"><div data-role="battery-fill"></div></div><label for="${prefix}-soc">Illustrative battery state of charge: <output data-role="soc-output" for="${prefix}-soc">35%</output><input id="${prefix}-soc" data-role="soc" type="range" min="0" max="100" step="1" value="35"></label></div><div class="explorer__actions"><button type="button" data-action="play">Play battery illustration</button><button type="button" data-action="reset-soc">Reset to 35%</button></div><p class="explorer__hint" data-role="animation-status" role="status">Animation is paused. Its timing has no relation to real charging time.</p><div class="explorer__curve"><svg viewBox="0 0 560 200" role="img" aria-labelledby="${prefix}-curve-title ${prefix}-curve-desc"><title id="${prefix}-curve-title">Illustrative power taper linked to selected state of charge</title><desc id="${prefix}-curve-desc">An invented relative-power curve, flat until 50 percent then falling toward full. Not measured, predicted or verified for any vehicle.</desc><path d="M48 18V156H535" fill="none" stroke="currentColor" stroke-width="2"/><path data-role="curve-path" fill="none" stroke="#35bfa4" stroke-width="4"/><line data-role="curve-marker" y1="22" y2="156" stroke="currentColor" stroke-dasharray="4 4"/><circle data-role="curve-dot" r="6" fill="#d69b48"/><text x="51" y="181">0%</text><text x="282" y="181">50%</text><text x="502" y="181">100% SOC</text><text x="56" y="15">Relative power · arbitrary units</text></svg></div><p class="explorer__warning"><strong>Not a verified vehicle charge curve.</strong> This invented curve only explains the concept of tapering. Actual charging depends on the vehicle, charger, temperature, battery conditioning and other limits. It is not a charging-time or range estimator.</p></section>
+    <section class="explorer__section" aria-labelledby="${prefix}-energy">
+      <h3 id="${prefix}-energy">Follow the energy</h3>
+      <label class="explorer__inline-label" for="${prefix}-energy-mode">Energy path<select id="${prefix}-energy-mode" data-role="energy-mode"><option value="ac">AC charging</option><option value="dc">DC fast charging</option></select></label>
+      <div class="explorer__flow" data-role="flow"></div>
+      <div class="explorer__battery-row">
+        <div class="explorer__battery" aria-hidden="true"><div data-role="battery-fill"></div></div>
+        <label for="${prefix}-soc">Illustrative battery state of charge: <output data-role="soc-output" for="${prefix}-soc">35%</output><input id="${prefix}-soc" data-role="soc" type="range" min="0" max="100" step="1" value="35"></label>
+      </div>
+      <div class="explorer__actions"><button type="button" data-action="play">Play battery illustration</button><button type="button" data-action="reset-soc">Reset to 35%</button></div>
+      <p class="explorer__hint" data-role="animation-status" role="status">Animation is paused. Its timing has no relation to real charging time.</p>
+      <div class="explorer__curve">
+        <p class="explorer__hint">Relative power · arbitrary units</p>
+        <svg viewBox="0 0 560 170" role="img" aria-labelledby="${prefix}-curve-title ${prefix}-curve-desc">
+          <title id="${prefix}-curve-title">Illustrative power taper linked to selected state of charge</title>
+          <desc id="${prefix}-curve-desc">An invented relative-power curve, flat until 50 percent then falling toward full. Not measured, predicted or verified for any vehicle.</desc>
+          <path d="M48 18V156H535" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path data-role="curve-path" fill="none" stroke="currentColor" stroke-width="4"/>
+          <line data-role="curve-marker" y1="22" y2="156" stroke="currentColor" stroke-dasharray="4 4"/>
+          <circle data-role="curve-dot" r="6" fill="currentColor"/>
+        </svg>
+        <div class="explorer__curve-axis" aria-hidden="true"><span>0%</span><span>50%</span><span>100% SOC</span></div>
+      </div>
+      <p class="explorer__warning"><strong>Not a verified vehicle charge curve.</strong> This invented curve only explains the concept of tapering. Actual charging depends on the vehicle, charger, temperature, battery conditioning and other limits. It is not a charging-time or range estimator.</p>
+    </section>
     <section class="explorer__section" aria-labelledby="${prefix}-world"><h3 id="${prefix}-world">Other regional interfaces</h3><div class="explorer__cards explorer__cards--two"><article><h4>Type 2 · AC</h4><p>Common in Europe and other markets; supports compatible single- or three-phase AC installations. Not interchangeable with J1772 just because both carry AC.</p><span class="explorer__hint">Learning card only · no 3D model included</span></article><article><h4>CCS Combo 2 · DC</h4><p>Combines a Type 2-style upper interface with two DC power contacts. Common for DC fast charging in Europe and other markets; physically different from CCS1.</p><span class="explorer__hint">Learning card only · no 3D model included</span></article></div></section>
     <footer class="explorer__footer"><p><strong>Originality & sources:</strong> All diagrams, procedural 3D shapes and illustrative animation are original to this app. No manufacturer CAD, logos, station availability or vehicle specifications are used. Optional rendering: Three.js 0.170.0 and OrbitControls (MIT), served by esm.sh.</p><p>Read official background: <a href="https://www.sae.org/standards/content/j3400_202409/" target="_blank" rel="noopener noreferrer">SAE J3400</a> · <a href="https://afdc.energy.gov/fuels/electricity_infrastructure.html" target="_blank" rel="noopener noreferrer">U.S. DOE charging infrastructure</a> · <a href="https://www.charin.global/technology/ccs/" target="_blank" rel="noopener noreferrer">CharIN CCS</a> · <a href="https://www.chademo.com/" target="_blank" rel="noopener noreferrer">CHAdeMO</a>. Always verify vehicle and equipment documentation before connecting or using an adapter.</p></footer>`;
   container.replaceChildren(root);
@@ -256,7 +279,7 @@ export async function mountExplorer(container) {
     const plate = mesh(
       group,
       new three.CylinderGeometry(0.61, 0.61, 0.12, 40),
-      "#253447",
+      "#343b37",
       [0, 0, z + 0.16],
     );
     plate.rotation.x = Math.PI / 2;
@@ -285,7 +308,7 @@ export async function mountExplorer(container) {
         -0.72,
         z - 0.1,
       ]);
-      mesh(group, new three.BoxGeometry(1.1, 0.58, 0.08), "#253447", [
+      mesh(group, new three.BoxGeometry(1.1, 0.58, 0.08), "#343b37", [
         0,
         -0.76,
         z + 0.25,
@@ -295,14 +318,14 @@ export async function mountExplorer(container) {
       const contact = mesh(
         group,
         new three.CylinderGeometry(radius, radius, 0.14, 20),
-        "#d8e3e9",
+        "#dce1dc",
         [px, py, z + 0.3],
       );
       contact.rotation.x = Math.PI / 2;
       const recess = mesh(
         group,
         new three.CylinderGeometry(radius * 0.64, radius * 0.64, 0.015, 20),
-        "#172334",
+        "#202622",
         [px, py, z + 0.38],
       );
       recess.rotation.x = Math.PI / 2;
@@ -310,20 +333,20 @@ export async function mountExplorer(container) {
     mesh(
       group,
       new three.BoxGeometry(0.35, 0.12, 0.45),
-      "#425166",
+      "#616b65",
       [0, 0.73, -0.1],
     );
     const grip = mesh(
       group,
       new three.CylinderGeometry(0.25, 0.19, 1.1, 24),
-      "#425166",
+      "#616b65",
       [0, -0.98, exploded ? -1.8 : -0.4],
     );
     grip.rotation.x = -0.22;
     const cable = mesh(
       group,
       new three.CylinderGeometry(0.11, 0.11, 0.7, 16),
-      "#202d3e",
+      "#2a302c",
       [0, -1.8, exploded ? -1.8 : -0.5],
     );
     cable.rotation.z = -0.1;
@@ -347,11 +370,11 @@ export async function mountExplorer(container) {
       const car = new three.Group();
       model.add(car);
       car.position.set(state.mode === "scene" ? 0.9 : -0.9, -0.5, 0);
-      mesh(car, new three.BoxGeometry(2.2, 0.55, 0.95), "#63839b");
+      mesh(car, new three.BoxGeometry(2.2, 0.55, 0.95), "#7b867e");
       mesh(
         car,
         new three.BoxGeometry(1.2, 0.5, 0.85),
-        "#92aec0",
+        "#b0bab2",
         [0.1, 0.5, 0],
       );
       for (const x of [-0.7, 0.7])
@@ -359,7 +382,7 @@ export async function mountExplorer(container) {
           const wheel = mesh(
             car,
             new three.CylinderGeometry(0.29, 0.29, 0.16, 20),
-            "#253447",
+            "#343b37",
             [x, -0.34, z],
           );
           wheel.rotation.x = Math.PI / 2;
@@ -367,20 +390,20 @@ export async function mountExplorer(container) {
       mesh(
         car,
         new three.BoxGeometry(0.24, 0.24, 0.04),
-        "#35bfa4",
+        "#c5cec2",
         [0.8, 0.08, 0.5],
       );
       if (state.mode === "scene") {
         mesh(
           model,
           new three.BoxGeometry(0.8, 1.8, 0.65),
-          "#253447",
+          "#343b37",
           [-1.5, -0.2, 0],
         );
         mesh(
           model,
           new three.BoxGeometry(0.6, 0.45, 0.05),
-          "#35bfa4",
+          "#c5cec2",
           [-1.5, 0.25, 0.35],
         );
         const path = new three.CatmullRomCurve3([
@@ -391,13 +414,13 @@ export async function mountExplorer(container) {
         mesh(
           model,
           new three.TubeGeometry(path, 28, 0.045, 8, false),
-          "#63a8ec",
+          "#727c75",
         );
       } else {
         mesh(
           model,
           new three.BoxGeometry(0.42, 0.45, 0.6),
-          "#d69b48",
+          "#858377",
           [0.7, -0.4, 0.9],
         );
         const connector = face(model, state.primary, 1.7);
@@ -488,7 +511,7 @@ export async function mountExplorer(container) {
       renderer.setClearColor(0x000000, 0);
       scene = new three.Scene();
       camera = new three.PerspectiveCamera(40, 1, 0.1, 50);
-      scene.add(new three.HemisphereLight(0xffffff, 0x667788, 2.7));
+      scene.add(new three.HemisphereLight(0xffffff, 0x697169, 2.7));
       const light = new three.DirectionalLight(0xffffff, 3);
       light.position.set(3, 4, 6);
       scene.add(light);

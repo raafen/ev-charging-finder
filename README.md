@@ -13,6 +13,22 @@ A calm, map-first charging companion built with Flask, a FastAPI documentation g
 
 Captured from the deployed application. The video demonstrates filtering, station details, the connector lab and theme switching; all shown stations are fictional.
 
+## Interface refinement
+
+Current uses a neutral, map-first interface rather than a dashboard or landing page:
+
+- A compact wordmark and text navigation; no decorative hero, avatars, network monograms or promotional cards.
+- One primary ZIP search with location recentering. Coordinate entry, radius and demo/live selection sit under **Search options**; connector/network/compatibility controls sit under **Filters**.
+- Directly selectable station rows, separated by dividers. Power, connector, distance and reported status have a consistent hierarchy; saving and comparison remain independent actions.
+- Mobile search stays accessible above the map. The station sheet has a keyboard/touch expansion control, integrated list switching and safe-area-aware navigation. Selected pins are kept clear of the sheet.
+- Garage, charging estimates, network/station comparisons, trip planning and the connector guide share form, typography and control conventions. Source/freshness detail expands without hiding essential availability warnings.
+- `static/app.css` centralizes color, geometry, spacing and motion tokens. `static/ui.js` supplies shared semantic DOM, form and action primitives. No new UI framework or runtime dependency was added.
+
+The palette centers on `#F8F9F8`, `#181A19` and white surfaces, with `#B8F26B` reserved for primary actions and charging indicators. Small secondary text uses `#606562` instead of the lighter reference gray to retain AA contrast. Typography uses installed Inter or the platform system sans-serif—no remotely loaded font dependency. Standard transitions are 180–250 ms and respect reduced motion.
+
+The refinement was reviewed in light/dark themes, at 320/390px mobile widths and at a 720×500 CSS-pixel reflow viewport. Automated WCAG A/AA checks were exercised on the discovery, filters, station detail, garage, network and connector surfaces; this is not a formal accessibility certification.
+
+
 ## Run locally
 
 Python 3.12–3.14:
@@ -57,6 +73,7 @@ python cli.py 40.758 -73.9855 --radius 10 --json
 - `providers.py`: Open Charge Map / OSRM interfaces, timeout/retry policy and thread-safe bounded caches. Raw upstream records remain server-side.
 - `domain.py`: connector normalization, manual vehicle interface, physical/network compatibility and constant-power estimates.
 - `static/app.js` / `domain.js`: framework-free UI and local-first calculations. Browser preferences stay on-device. Live search is same-origin server API; Pages performs fictional searches locally.
+- `static/ui.js`: shared DOM, safe external links, native form fields and semantic fieldset primitives; no application state or charging rules.
 - `static/explorer.js`: lazy connector studio. No Three.js or model dependency on the main search path.
 - `scripts/build_vercel.py`: copies only public browser assets to the Vercel CDN directory and versions the service worker.
 - `scripts/build_pages.py`: renders a static, explicitly fictional shell with relative paths; exports no server code or credentials.
@@ -100,7 +117,7 @@ python -m pip_audit -r requirements-dev.txt
 python scripts/build_pages.py --output site
 ```
 
-Python tests cover provider errors, cache/rate bounds, malformed data, privacy, ZIP/radius behavior, compatibility rules, charging assumptions and route calculations. Browser tests exercise both Flask and a `/ev-charging-finder/` static export, including third-party resource failure, filtering, demo search, persistent themes and the mobile sheet.
+Python tests cover provider errors, cache/rate bounds, malformed data, privacy, ZIP/radius behavior, compatibility rules, charging assumptions and route calculations. Six browser tests exercise both Flask and a `/ev-charging-finder/` static export, including third-party resource failure, filtering, ZIP/coordinate mode transitions, station-detail save/compare actions, persistent themes and the mobile sheet.
 
 ## Deployment
 
@@ -108,4 +125,4 @@ See [DEPLOYMENT.md](DEPLOYMENT.md). Vercel is the primary frontend/backend deplo
 
 ## Attribution
 
-Live charging data: [Open Charge Map and its providers](https://openchargemap.org/develop/api), under each source's license. ZIP geocoding: [Zippopotam.us / GeoNames](https://www.zippopotam.us/). Basemap: [OpenFreeMap](https://openfreemap.org/) and [OpenStreetMap contributors](https://www.openstreetmap.org/copyright). MapLibre and Three.js are BSD/MIT-licensed respectively; Google Fonts DM Sans and Manrope are SIL Open Font License fonts. Connector models, SVG illustrations and app icons were created for this project; they are simplified educational depictions, not licensed manufacturer CAD. No manufacturer/network affiliation is implied. No source-code redistribution license has been chosen for this repository.
+Live charging data: [Open Charge Map and its providers](https://openchargemap.org/develop/api), under each source's license. ZIP geocoding: [Zippopotam.us / GeoNames](https://www.zippopotam.us/). Basemap: [OpenFreeMap](https://openfreemap.org/) and [OpenStreetMap contributors](https://www.openstreetmap.org/copyright). MapLibre and Three.js are BSD/MIT-licensed respectively. Interface typography uses locally available/system fonts; no proprietary font files are distributed. Connector models, SVG illustrations and app icons were created for this project; they are simplified educational depictions, not licensed manufacturer CAD. No manufacturer/network affiliation is implied. No source-code redistribution license has been chosen for this repository.

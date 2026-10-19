@@ -8,6 +8,7 @@ let SHELL_ASSETS = [
   "./",
   "./static/app.css",
   "./static/app.js",
+  "./static/ui.js",
   "./static/domain.js",
   "./static/demo.json",
   "./static/explorer.js",
