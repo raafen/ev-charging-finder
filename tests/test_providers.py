@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import requests
 from ev_charging_finder.app import app, limiter, RateLimiter
 from ev_charging_finder.finder import normalize, route_search, get_station
-from ev_charging_finder.providers import FinderError, TTLCache, request_json, OSRMProvider, OpenChargeMapProvider, station_cache, reference_cache, zip_cache
+from ev_charging_finder.providers import FinderError, TTLCache, request_json, OSRMProvider, OpenChargeMapProvider, station_cache, reference_cache, zip_cache, station_context, context_cache
 
 
 class CacheTests(unittest.TestCase):
@@ -49,6 +49,7 @@ class ProviderTests(unittest.TestCase):
         station_cache.clear()
         reference_cache.clear()
         zip_cache.clear()
+        context_cache.clear()
         limiter.entries.clear()
         self.client = app.test_client()
 
@@ -101,6 +102,39 @@ class ProviderTests(unittest.TestCase):
         provider.references()
         provider.references()
         self.assertEqual(fetch.call_count, 1)
+
+    @patch("ev_charging_finder.providers.request_json")
+    def test_station_context_weather_and_nearby_places_are_cached(self, fetch):
+        weather = {"current": {"time": "2026-10-19T12:00", "temperature_2m": 18.5,
+                               "precipitation": 0, "wind_speed_10m": 7.2, "weather_code": 1}}
+        amenities = {"features": [
+            {"properties": {"osm_key": "amenity", "osm_value": "cafe", "osm_type": "N",
+                            "osm_id": 1, "name": "Test Cafe"},
+             "geometry": {"coordinates": [-73.986, 40.759]}},
+            {"properties": {"osm_key": "amenity", "osm_value": "toilets", "osm_type": "W",
+                            "osm_id": 2},
+             "geometry": {"coordinates": [-73.987, 40.760]}},
+            {"properties": {"osm_key": "amenity", "osm_value": "cafe", "osm_type": "N",
+                            "osm_id": 3, "name": "Too far"},
+             "geometry": {"coordinates": [-73.9, 40.8]}},
+        ]}
+        fetch.side_effect = [weather, amenities, amenities, amenities]
+        context = station_context(40.758, -73.9855)
+        self.assertEqual(context["weather"]["description"], "Mainly clear / partly cloudy")
+        self.assertEqual(context["weather"]["temperature_c"], 18.5)
+        self.assertEqual([item["category"] for item in context["amenities"]["items"]], ["cafe", "toilets"])
+        self.assertEqual(context["amenities"]["items"][0]["name"], "Test Cafe")
+        station_context(40.758, -73.9855)
+        self.assertEqual(fetch.call_count, 4)
+
+    @patch("ev_charging_finder.app.station_context", return_value={"weather": {"status": "unavailable"}})
+    @patch("ev_charging_finder.app.get_station", return_value={"id": 123, "latitude": 40, "longitude": -73})
+    def test_station_context_endpoint_uses_station_coordinates(self, lookup, context):
+        response = self.client.get("/api/station/123/context?latitude=40&longitude=-73")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["station_id"], 123)
+        context.assert_called_once_with(40.0, -73.0)
+        lookup.assert_not_called()
 
     @patch.dict("os.environ", {"OCM_API_KEY": "private-secret", "ROUTING_BASE_URL": "https://private:password@routing.invalid"})
     def test_config_health_and_boot_never_expose_secrets(self):

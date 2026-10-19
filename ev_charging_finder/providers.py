@@ -1,5 +1,6 @@
 """Server-only upstream adapters, bounded caches and conservative transport policy."""
 from collections import OrderedDict
+import math
 import copy
 import os
 import threading
@@ -157,3 +158,108 @@ class OSRMProvider:
             raise
         except (AttributeError, KeyError, IndexError, TypeError, ValueError):
             raise FinderError("Routing provider returned invalid route data.") from None
+
+
+context_cache = TTLCache(256, 900)
+
+
+def station_context(latitude, longitude):
+    """Fetch public weather and nearby OSM amenities; partial failures stay explicit."""
+    from datetime import datetime, timezone
+    from .domain import finite_number
+    from .finder import distance_km, validate
+
+    latitude, longitude = float(latitude), float(longitude)
+    validate(latitude, longitude, 1, 1)
+    key = (round(latitude, 3), round(longitude, 3))
+    cached = context_cache.get(key)
+    if cached is not None:
+        return cached
+    context = {
+        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        "weather": {"status": "unavailable", "source": "Open-Meteo"},
+        "amenities": {"status": "unavailable", "source": "OpenStreetMap contributors", "items": []},
+    }
+    try:
+        data = request_json(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": latitude, "longitude": longitude,
+                "current": "temperature_2m,precipitation,wind_speed_10m,weather_code",
+                "timezone": "auto",
+            },
+            timeout=(3, 6), label="Weather provider",
+        )
+        current = data.get("current", {})
+        code = finite_number(current.get("weather_code"), "weather code", minimum=0)
+        description = (
+            "Clear" if code == 0 else "Mainly clear / partly cloudy" if code in (1, 2, 3)
+            else "Fog" if code in (45, 48) else "Rain / drizzle" if code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67)
+            else "Snow" if code in (71, 73, 75, 77, 85, 86)
+            else "Rain showers" if code in (80, 81, 82)
+            else "Thunderstorm" if code in (95, 96, 99)
+            else "Conditions unavailable"
+        )
+        context["weather"] = {
+            "status": "available", "source": "Open-Meteo",
+            "observed_at": current.get("time"), "description": description,
+            "temperature_c": finite_number(current.get("temperature_2m"), "temperature"),
+            "precipitation_mm": finite_number(current.get("precipitation"), "precipitation", minimum=0),
+            "wind_kmh": finite_number(current.get("wind_speed_10m"), "wind speed", minimum=0),
+            "weather_code": code,
+        }
+    except (AttributeError, FinderError, TypeError, ValueError):
+        pass
+    delta_lat = 1500 / 111000
+    delta_lon = delta_lat / max(0.1, math.cos(math.radians(latitude)))
+    bbox = (
+        max(-180, longitude - delta_lon), max(-90, latitude - delta_lat),
+        min(180, longitude + delta_lon), min(90, latitude + delta_lat),
+    )
+    items, succeeded = {}, 0
+    categories = {"cafe", "restaurant", "fast_food", "food_court", "toilets"}
+    for term in ("cafe", "restaurant", "toilets"):
+        try:
+            data = request_json(
+                "https://photon.komoot.io/api/",
+                params={"q": term, "bbox": ",".join(map(str, bbox)), "limit": 20},
+                headers={"User-Agent": "CurrentEVFinder/2.0", "Accept": "application/json"},
+                timeout=(3, 6), label="Nearby places provider",
+            )
+            succeeded += 1
+            features = data.get("features", [])
+            for feature in features if isinstance(features, list) else []:
+                if not isinstance(feature, dict):
+                    continue
+                props = feature.get("properties", {})
+                geometry = feature.get("geometry", {})
+                if not isinstance(props, dict) or props.get("osm_key") != "amenity" or not isinstance(geometry, dict):
+                    continue
+                coords = geometry.get("coordinates", [])
+                category = props.get("osm_value")
+                if category not in categories or not isinstance(coords, list) or len(coords) < 2:
+                    continue
+                try:
+                    lon = finite_number(coords[0], "longitude", minimum=-180, maximum=180)
+                    lat = finite_number(coords[1], "latitude", minimum=-90, maximum=90)
+                except ValueError:
+                    continue
+                distance_m = round(distance_km(latitude, longitude, lat, lon) * 1000)
+                if distance_m > 1500:
+                    continue
+                item_key = (props.get("osm_type"), props.get("osm_id"))
+                if not all(item_key):
+                    continue
+                items[item_key] = {
+                    "name": props.get("name")[:160] if isinstance(props.get("name"), str) else None,
+                    "category": category, "distance_m": distance_m,
+                }
+        except (AttributeError, FinderError, TypeError, ValueError):
+            continue
+    if succeeded:
+        context["amenities"] = {
+            "status": "available", "source": "OpenStreetMap contributors via Photon",
+            "radius_m": 1500, "items": sorted(items.values(), key=lambda item: item["distance_m"])[:12],
+        }
+    context_cache.put(key, context)
+    return context

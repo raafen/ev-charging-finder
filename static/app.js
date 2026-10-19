@@ -1151,6 +1151,64 @@ function showDetail(s) {
     ),
   );
   panel.append(sourceDetails);
+  const liveContext = el("section", null, "live-context");
+  liveContext.append(
+    el("h3", "Local weather & nearby places"),
+    el("p", "Loading current weather and mapped amenities…", "assumptions"),
+  );
+  panel.append(liveContext);
+  const contextQuery = new URLSearchParams({
+    latitude: String(s.latitude),
+    longitude: String(s.longitude),
+  });
+  api(`api/station/${encodeURIComponent(s.id)}/context?${contextQuery}`)
+    .then(({ context }) => {
+      if (state.selected !== s.id || panel.hidden) return;
+      const fetchedAt = new Date(context.retrieved_at);
+      const freshness = Number.isNaN(fetchedAt.valueOf())
+        ? "Retrieval time unavailable."
+        : `Retrieved ${fetchedAt.toLocaleString()}.`;
+      liveContext.replaceChildren(el("h3", "Local weather & nearby places"));
+      const weather = context.weather;
+      liveContext.append(
+        el(
+          "p",
+          weather?.status === "available"
+            ? `${weather.description}: ${weather.temperature_c}°C · ${weather.precipitation_mm} mm precipitation · ${weather.wind_kmh} km/h wind. Observed ${weather.observed_at || "time not provided"}.`
+            : "Current weather unavailable.",
+        ),
+      );
+      const amenities = context.amenities;
+      if (amenities?.status !== "available") {
+        liveContext.append(el("p", "Nearby mapped places are temporarily unavailable."));
+      } else if (!amenities.items.length) {
+        liveContext.append(el("p", "No nearby places are currently mapped in OpenStreetMap."));
+      } else {
+        const list = el("ul");
+        for (const item of amenities.items) {
+          const category = {
+            cafe: "cafe", restaurant: "restaurant", fast_food: "quick-service food",
+            toilets: "restroom", drinking_water: "drinking water",
+          }[item.category] || "place";
+          list.append(
+            el("li", `${item.name || category} · ${category} · ${item.distance_m} m`),
+          );
+        }
+        liveContext.append(list);
+      }
+      liveContext.append(
+        el("small", `${freshness} Weather and nearby places may be incomplete or stale; confirm details at the location.`),
+        link("Weather by Open-Meteo", "https://open-meteo.com/en/docs"),
+        link("OpenStreetMap contributors via Photon", "https://www.openstreetmap.org/copyright"),
+      );
+    })
+    .catch(() => {
+      if (state.selected === s.id && !panel.hidden)
+        liveContext.replaceChildren(
+          el("h3", "Local weather & nearby places"),
+          el("p", "Live local context unavailable. Station details remain available."),
+        );
+    });
   const tools = el("div", null, "detail-actions");
   tools.append(
     button(
@@ -2212,7 +2270,7 @@ function openDriveMode() {
   body.append(
     el("h3", "Journey overview"),
     el("p", `${route.distance_miles.toFixed(1)} mi · ${Math.round(route.duration_minutes)} min driving, excluding traffic and stops.`),
-    el("p", "Vehicle battery, live location, weather, traffic, and live charger availability are not connected."),
+    el("p", "Live location, battery telemetry, traffic, and live charger availability are not connected. Current weather is shown for the first mapped stop."),
   );
   const timeline = el("div", null, "trip-timeline");
   timeline.append(el("div", null, "trip-stop"));
@@ -2222,7 +2280,34 @@ function openDriveMode() {
     stop.append(el("strong", `${index + 1}. ${stationName(station)}`));
     stop.append(el("p", station.route ? `${station.route.from_origin_miles.toFixed(1)} driving miles from origin · reported station data, not live occupancy.` : "Manually added stop; driving leg and arrival battery are not calculated."));
     timeline.append(stop);
+    if (index === 0) {
+      const weatherLine = el("p", "Loading current weather near first planned stop…", "assumptions");
+      stop.append(weatherLine);
+      if (/^[1-9][0-9]{0,11}$/.test(String(station.id)) &&
+          Number.isFinite(Number(station.latitude)) &&
+          Number.isFinite(Number(station.longitude))) {
+        const params = new URLSearchParams({
+          latitude: String(station.latitude),
+          longitude: String(station.longitude),
+        });
+        api(`api/station/${encodeURIComponent(station.id)}/context?${params}`)
+          .then(({ context }) => {
+            if (!body.isConnected) return;
+            const weather = context.weather;
+            weatherLine.textContent = weather?.status === "available"
+              ? `Weather near first planned stop: ${weather.description}, ${weather.temperature_c}°C · observed ${weather.observed_at || "time unavailable"}. Retrieved ${new Date(context.retrieved_at).toLocaleString()}.`
+              : "Current weather near this stop is unavailable.";
+          })
+          .catch(() => {
+            if (body.isConnected) weatherLine.textContent = "Current weather near this stop is unavailable.";
+          });
+      } else {
+        weatherLine.textContent = "Current weather unavailable for this manually entered stop.";
+      }
+    }
   });
+  if (!state.tripStops.length)
+    timeline.append(el("p", "Add a charging stop to see current weather for the first planned stop."));
   const destination = el("div", null, "trip-stop");
   destination.append(el("strong", "Destination"), el("p", `${route.distance_miles.toFixed(1)} driving miles · arrival battery estimate unavailable without live vehicle data.`));
   timeline.append(destination);

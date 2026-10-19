@@ -125,6 +125,15 @@ class WorkspaceTests(unittest.TestCase):
                             "center": [40.758, -73.9855], "location": "Test ZIP search area",
                             "retrieved_at": "2026-10-18T12:00:00+00:00",
                         }
+                elif path.endswith("/context"):
+                    response = {
+                        "station_id": 901001,
+                        "context": {
+                            "weather": {"status": "available", "description": "Clear", "temperature_c": 18.5, "precipitation_mm": 0, "wind_kmh": 7, "observed_at": "noon"},
+                            "amenities": {"status": "available", "items": [{"name": "Test Cafe", "category": "cafe", "distance_m": 80}]},
+                            "retrieved_at": "2026-10-18T12:05:00+00:00",
+                        },
+                    }
                 elif path.startswith("/api/station/"):
                     station_id = path.rsplit("/", 1)[-1]
                     response = next((station for station in TEST_STATIONS if str(station["id"]) == station_id), None)
@@ -286,6 +295,7 @@ class WorkspaceTests(unittest.TestCase):
                 self.search_zip(page, endpoint)
                 page.locator('[data-station="901001"] .card-link').click()
                 expect(page.locator("#detail")).to_contain_text("Test Riverside Charging")
+                expect(page.locator("#detail .live-context")).to_contain_text("Test Cafe")
                 page.get_by_role("button", name="Add to trip").click()
                 page.get_by_role("button", name="Save", exact=True).click()
                 expect(page.get_by_role("button", name="Save", exact=True)).to_have_attribute("aria-pressed", "true")
@@ -316,6 +326,18 @@ class WorkspaceTests(unittest.TestCase):
         page.get_by_role("button", name="Plan a trip").click()
         expect(page.locator("#modal-title")).to_have_text("Trips")
         expect(page.locator("#routing-unavailable")).to_be_visible()
+
+    def test_drive_mode_shows_fresh_weather_for_first_mapped_stop(self):
+        page, _, _, _ = self.open_workspace("flask")
+        page.evaluate("""station => {
+            localStorage.setItem('current-trip-route', JSON.stringify({
+                distance_miles: 250, duration_minutes: 240
+            }));
+            localStorage.setItem('current-trip-stops', JSON.stringify([station]));
+        }""", TEST_STATIONS[0])
+        page.reload(wait_until="domcontentloaded")
+        page.locator("#drive-nav").click()
+        expect(page.locator("#modal-body")).to_contain_text("Weather near first planned stop: Clear, 18.5°C")
     def test_retired_sample_data_is_removed_without_losing_real_saved_stations(self):
         for mode in self.urls:
             with self.subTest(mode=mode):

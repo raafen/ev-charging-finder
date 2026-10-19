@@ -1,13 +1,13 @@
 /* Cache only this application's owned interface. Never cache API data or tiles. */
 "use strict";
-const VERSION = "current-shell-v2";
+const VERSION = "current-shell-v3";
 const ROOT = new URL("./", self.location.href);
 const CACHE_PREFIX = `current-shell-${encodeURIComponent(ROOT.pathname)}-`;
 const CACHE_NAME = CACHE_PREFIX + VERSION;
 let SHELL_ASSETS = [
   "./",
-  "./static/app.css?v=4",
-  "./static/app.js?v=4",
+  "./static/app.css?v=5",
+  "./static/app.js?v=5",
   "./static/ui.js",
   "./static/domain.js",
   "./static/explorer.js",

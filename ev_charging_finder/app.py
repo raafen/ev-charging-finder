@@ -3,6 +3,7 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -10,6 +11,7 @@ from flask import Flask, render_template, request, jsonify, g, send_from_directo
 from werkzeug.exceptions import HTTPException
 from .domain import compatibility, estimate
 from .finder import FinderError, search, lookup_zip, validate, get_station, route_search
+from .providers import station_context
 
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.config["MAX_CONTENT_LENGTH"] = 65536
@@ -207,6 +209,28 @@ def api_station(station_id):
     try:
         station = get_station(station_id)
         return jsonify(station=station, retrieved_at=timestamp())
+    except (TypeError, ValueError, FinderError) as exc:
+        return failure(exc)
+
+
+@app.get("/api/station/<station_id>/context")
+def api_station_context(station_id):
+    try:
+        if not re.fullmatch(r"[1-9][0-9]{0,11}", station_id):
+            raise ValueError("Station ID must be a positive Open Charge Map numeric ID.")
+        latitude, longitude = request.args.get("latitude"), request.args.get("longitude")
+        if latitude is None and longitude is None:
+            station = get_station(station_id)
+            latitude, longitude = station["latitude"], station["longitude"]
+        elif latitude is None or longitude is None:
+            raise ValueError("Both latitude and longitude are required.")
+        else:
+            latitude, longitude = float(latitude), float(longitude)
+            validate(latitude, longitude, 1, 1)
+        return jsonify(
+            station_id=int(station_id),
+            context=station_context(latitude, longitude),
+        )
     except (TypeError, ValueError, FinderError) as exc:
         return failure(exc)
 

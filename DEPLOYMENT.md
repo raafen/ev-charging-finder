@@ -33,6 +33,8 @@ Public map URLs must be licensed for browser distribution. Do not place privileg
 
 Station queries: up to 100 records; cache 128 entries / 180-second TTL. Reference cache: 8 entries / one day. ZIP cache: 256 entries / one day. Caches and rate counters are process-local and reset on cold starts. Vercel workers do not share state; use platform firewall/distributed enforcement before exposing significant production traffic.
 
+Station context requests (weather and nearby mapped amenities) are served from the backend at `/api/station/{id}/context`; station coordinates may be supplied by the UI so saved station snapshots do not require another Open Charge Map lookup. Context is cached for 15 minutes in a 256-entry process-local cache. Open-Meteo supplies current point conditions; Photon queries OpenStreetMap amenities within 1.5 km. These are best-effort public services with no SLA. The backend makes no stall-availability, pricing-feed, opening-hours, accessibility or facility-quality claims from these results. Do not poll this endpoint continuously.
+
 Upstream transport uses connection/read timeouts and at most two attempts for transient failures. Routing can perform multiple provider requests; large route searches can exceed a serverless duration budget. Use the container deployment for heavier routing workloads. Readiness reports configured capabilities, not upstream reachability.
 
 `/health` and `/ready` are public. API responses carry `X-Request-ID` and are not cacheable by shared intermediaries. Application logs omit credentials and precise locations. Review Vercel infrastructure logs/retention separately.
@@ -79,6 +81,7 @@ curl https://ev-charging-finder-nine.vercel.app/api/config
 curl -X POST https://ev-charging-finder-nine.vercel.app/api/search \
   -H 'Content-Type: application/json' \
   -d '{"location_mode":"zip","zip_code":"10036","radius":10,"limit":100}'
+curl 'https://ev-charging-finder-nine.vercel.app/api/station/12345/context?latitude=40.758&longitude=-73.9855'
 ```
 
 Check both actual browser surfaces. Confirm startup has a blank ZIP and no station results, search a US ZIP, change the radius, use location or map-area search, filter reported connectors, toggle theme, save/compare stations, open the connector guide and visit `/docs`. Verify Pages requests reach the Vercel API with the expected CORS origin and that no provider key reaches browser requests or public assets. If routing is configured, enter origin/destination ZIP codes. Reported operational status is not live occupancy; verify access and equipment before travel.

@@ -18,7 +18,7 @@ from ev_charging_finder.app import app
 
 ASSET_SUFFIXES = {".css", ".js", ".json", ".svg", ".webmanifest", ".png", ".jpg", ".webp", ".woff2"}
 DEFAULT_API_BASE = "https://ev-charging-finder-nine.vercel.app/"
-SHELL_VERSION = "current-shell-v2"
+SHELL_VERSION = "current-shell-v3"
 
 
 def api_base_url(value):
@@ -76,7 +76,7 @@ def build(destination):
         digest.update((destination / asset).read_bytes())
     worker = (ROOT / "static/sw.js").read_text(encoding="utf-8")
     worker = worker.replace(SHELL_VERSION, "current-shell-" + digest.hexdigest()[:16])
-    assets = [asset + "?v=4" if asset in ("./static/app.js", "./static/app.css") else asset for asset in assets]
+    assets = [asset + "?v=5" if asset in ("./static/app.js", "./static/app.css") else asset for asset in assets]
     worker = worker.replace("/* BUILD_ASSETS */", "SHELL_ASSETS = " + json.dumps(["./", *assets]) + ";")
     (destination / "sw.js").write_text(worker, encoding="utf-8")
     (destination / ".nojekyll").write_text("", encoding="utf-8")
